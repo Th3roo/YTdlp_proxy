@@ -169,29 +169,37 @@ async def stream_live_video(request: Request, range_header: Optional[str] = Head
 
                         chunk = await stream.read(int(read_amount)) # stream.read ожидает int
                         if not chunk:
+                            # print(f"Live stream: No more chunks from stream.read() for {active_video_url}.")
                             break
                         yield chunk
+                except HTTPException as e_stream:
+                    # Handle exceptions specifically from stream.read() or other operations within the iterator
+                    print(f"Live stream: HTTPException during content iteration for {active_video_url}: {e_stream.detail} (Status: {e_stream.status_code})")
+                    # Optionally, you could yield a special error marker if the client is designed to handle it,
+                    # but for video streams, usually just stopping is best.
+                    # Do not re-raise here if response has started, as it will cause the RuntimeError.
+                except Exception as e_gen:
+                    print(f"Live stream: Generic exception during content iteration for {active_video_url}: {e_gen}")
+                    # Similar to above, do not re-raise if response has started.
                 finally:
+                    # print(f"Live stream: Closing stream for {active_video_url} in iterator's finally block.")
                     if stream:
                         await stream.close()
 
             return StreamingResponse(ytdlp_content_iterator(), status_code=status_code, headers=headers)
 
-        except HTTPException as e: # Перехватываем ошибки от YTDLPSeekableStream или parse_range_header
-            if stream: await stream.close()
-            print(f"HTTPException during YTDLP streaming setup for {active_video_url}: {e.detail}")
-            # Если стриминг основного видео не удался, можно попробовать отдать заглушку
-            # Но это усложнит логику, пока просто пробрасываем ошибку или падаем на заглушку ниже, если active_video_url станет None
-            if e.status_code == 404 or e.status_code == 502 or e.status_code == 400: # Ошибки, после которых стоит попробовать заглушку
-                print(f"Falling back to placeholder due to YTDLP stream error: {e.detail}")
-                active_video_url = None # Принудительно переключаемся на заглушку
+        except HTTPException as e: # Catches errors from YTDLPSeekableStream setup or parse_range_header
+            if stream: await stream.close() # Ensure stream is closed if created before error
+            print(f"HTTPException during YTDLP streaming setup for {active_video_url}: {e.detail} (Status: {e.status_code})")
+            if e.status_code in [400, 404, 502, 503]: # Errors that might warrant falling back to placeholder
+                print(f"Falling back to placeholder due to YTDLP stream setup error: {e.detail}")
+                active_video_url = None # Force placeholder
             else:
-                raise e # Пробрасываем другие ошибки (например, 416)
-        except Exception as e:
+                raise e # Re-throw other HTTPExceptions (e.g., 416 Range Not Satisfiable)
+        except Exception as e_setup: # Catches other unexpected errors during setup
             if stream: await stream.close()
-            print(f"Unexpected error during YTDLP streaming setup for {active_video_url}: {e}")
-            # Также падаем на заглушку
-            active_video_url = None
+            print(f"Unexpected error during YTDLP streaming setup for {active_video_url}: {e_setup}")
+            active_video_url = None # Force placeholder for generic errors too
 
 
     # Если active_video_url все еще None (не было активного видео или произошла ошибка выше) -> стримим заглушку

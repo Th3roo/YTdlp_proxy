@@ -111,46 +111,78 @@ class YTDLPSeekableStream:
             # "bv*+ba/b" means best video with audio, or best overall if not available.
             # "[protocol^=http]" ensures it's downloadable.
             # "[vcodec!=none][acodec!=none]" ensures it has both video and audio.
-            # We might need to be more specific to avoid DASH manifests if filesize is None.
+            # We need to be more specific to avoid DASH manifests if filesize is None.
 
             # A simpler approach: iterate and find a good candidate
+            # Prioritize non-fragmented, non-live, http/https formats with both codecs and known filesize.
             good_candidates = []
             for f in formats:
-                if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and \
-                   f.get('protocol') in ('http', 'https') and \
-                   not f.get('is_live') and not f.get('is_fragmented') and \
-                   f.get('filesize') or f.get('filesize_approx'): # Prefer formats with known size
+                # Stricter check: ensure it's not fragmented and has actual filesize
+                if (f.get('vcodec') != 'none' and f.get('acodec') != 'none' and
+                        f.get('protocol') in ('http', 'https') and
+                        not f.get('is_live') and
+                        not f.get('is_fragmented') and # Explicitly avoid fragmented
+                        f.get('fragment_base_url') is None and # Another check for fragmentation
+                        f.get('filesize') is not None): # Prioritize known filesize
                     good_candidates.append(f)
+
+            if not good_candidates: # Fallback to allow filesize_approx if no exact filesize found
+                 for f in formats:
+                    if (f.get('vcodec') != 'none' and f.get('acodec') != 'none' and
+                            f.get('protocol') in ('http', 'https') and
+                            not f.get('is_live') and
+                            not f.get('is_fragmented') and
+                            f.get('fragment_base_url') is None and
+                            (f.get('filesize') is not None or f.get('filesize_approx') is not None)):
+                        good_candidates.append(f)
+
 
             if good_candidates:
                 # Sort by filesize (descending) or some other preference if needed
-                good_candidates.sort(key=lambda f: f.get('filesize') or f.get('filesize_approx', 0), reverse=True)
+                # Prefer exact filesize, then approximate. Then by resolution or bitrate if desired.
+                good_candidates.sort(key=lambda f: (
+                    f.get('filesize') or 0,
+                    f.get('filesize_approx') or 0,
+                    f.get('height') or 0 # Prefer higher resolution as a tie-breaker
+                ), reverse=True)
+                # print(f"Selected format: {good_candidates[0]}")
                 return good_candidates[0]
 
             # If no "good" progressive found, try yt-dlp's internal logic for requested_formats
             # This part is from your original code and might pick a format even if not ideal.
-            processed_info = self.ydl.process_video_result(self.info_dict, download=False)
-            selected_formats_list = processed_info.get("requested_formats")
-            if selected_formats_list:
-                # requested_formats can be a list (e.g., video-only + audio-only)
-                # We need a single format for this class. Prefer the one with video.
-                for sf in selected_formats_list:
-                    if sf.get('vcodec') != 'none' and sf.get('protocol') in ('http', 'https'):
-                        return sf
-                if selected_formats_list[0].get('protocol') in ('http', 'https'): # Fallback to the first if any
-                     return selected_formats_list[0]
+            # But we should still filter it.
+            try:
+                processed_info = self.ydl.process_video_result(self.info_dict, download=False)
+                selected_formats_list = processed_info.get("requested_formats")
+                if selected_formats_list:
+                    for sf in selected_formats_list:
+                        # Ensure the selected format is also suitable (single file, http/s)
+                        if (sf.get('vcodec') != 'none' and
+                            sf.get('protocol') in ('http', 'https') and
+                            not sf.get('is_fragmented') and
+                            sf.get('fragment_base_url') is None):
+                            # print(f"Selected format from requested_formats: {sf}")
+                            return sf
+                    # Fallback to the first in list if it's downloadable, but less ideal
+                    if (selected_formats_list[0].get('protocol') in ('http', 'https') and
+                        not selected_formats_list[0].get('is_fragmented')):
+                        # print(f"Selected format (fallback from requested_formats): {selected_formats_list[0]}")
+                        return selected_formats_list[0]
 
-            # Fallback for cases where 'requested_formats' isn't populated but a single format is chosen
-            if "format_id" in processed_info and processed_info.get('protocol') in ('http', 'https'):
-                 # Check if this processed_info itself is a usable format
-                is_suitable = processed_info.get('vcodec') != 'none' and \
-                              processed_info.get('acodec') != 'none' and \
-                              not processed_info.get('is_live') and \
-                              not processed_info.get('is_fragmented')
-                if is_suitable:
+                # Fallback for cases where 'requested_formats' isn't populated but a single format is chosen by ytdl
+                if ("format_id" in processed_info and
+                    processed_info.get('protocol') in ('http', 'https') and
+                    not processed_info.get('is_fragmented') and
+                    processed_info.get('fragment_base_url') is None and
+                    processed_info.get('vcodec') != 'none'): # Ensure it has video
+                    # print(f"Selected format (processed_info fallback): {processed_info}")
                     return processed_info
 
-            print(f"Warning: Could not determine a single, suitable progressive format. Formats: {formats}")
+            except Exception as e_proc:
+                print(f"Warning: Error during yt-dlp process_video_result for format selection: {e_proc}")
+
+
+            print(f"Warning: Could not determine a single, suitable progressive format. Formats available: {formats}")
             return None
 
         except (yt_dlp.utils.YtDlpError, KeyError) as e:
@@ -209,22 +241,38 @@ class YTDLPSeekableStream:
                 # yt-dlp might not use this if the server doesn't support it well,
                 # or if continuedl is more effective for its strategy.
                 # Forcing it via http_headers is a strong hint.
-                if self.total_size: # Only set Range if we know the total size, otherwise it's tricky
-                     dl_opts["http_headers"] = {"Range": f"bytes={start_byte}-{effective_end_byte if effective_end_byte is not None else ''}"}
-                else: # If total size is unknown, we can't reliably use Range for the *end*
-                      # We might only be able to specify start, or download a chunk.
-                      # For now, let yt-dlp decide if total_size is None.
-                      # Or, we could try to download a fixed-size chunk from start_byte.
-                      # dl_opts["download_ranges"] = yt_dlp.utils.download_range_func(None, [(start_byte, effective_end_byte)])
-                      # The above is more for direct control, http_headers is usually preferred.
-                      pass
+                # Conditional Range header:
+                # Only apply if total_size is known and we have a specific end_byte for the current request segment.
+                # If total_size is unknown, or if end_byte for this segment is speculative (e.g. initial large chunk),
+                # let yt-dlp manage with continuedl, as precise Range might be problematic.
+                if self.total_size and end_byte is not None: # 'end_byte' here is the original from caller, not 'effective_end_byte'
+                    # Ensure effective_end_byte (which might be capped by total_size) is used.
+                    # And start_byte must be less than effective_end_byte.
+                    if effective_end_byte is not None and start_byte <= effective_end_byte:
+                        dl_opts["http_headers"] = {"Range": f"bytes={start_byte}-{effective_end_byte}"}
+                        # print(f"DEBUG: Using Range header: bytes={start_byte}-{effective_end_byte}")
+                    else:
+                        # This case (e.g. start_byte > effective_end_byte) should ideally be caught before attempting download.
+                        # If effective_end_byte is None here but self.total_size is known, it means we want the rest of the file.
+                        dl_opts["http_headers"] = {"Range": f"bytes={start_byte}-"}
+                        # print(f"DEBUG: Using Range header: bytes={start_byte}-")
+                # else:
+                    # print(f"DEBUG: Not using explicit Range header. total_size: {self.total_size}, end_byte: {end_byte}")
 
 
                 # print(f"Attempting to download range {start_byte}-{effective_end_byte} for {self.url} with opts: {dl_opts}")
 
                 # Run synchronous yt-dlp download in an executor thread
-                with yt_dlp.YoutubeDL(dl_opts) as ydl_segment:
-                    await self.loop.run_in_executor(None, ydl_segment.download, [self.url])
+                try:
+                    with yt_dlp.YoutubeDL(dl_opts) as ydl_segment:
+                        await self.loop.run_in_executor(None, ydl_segment.download, [self.url])
+                except yt_dlp.utils.DownloadError as de:
+                    # Log more details for DownloadError, especially for conflicting range
+                    err_msg = str(de)
+                    print(f"yt-dlp DownloadError occurred: {err_msg} for URL {self.url} with opts {dl_opts}")
+                    if "conflicting range" in err_msg.lower():
+                        print(f"Conflicting range error details: start_byte={start_byte}, effective_end_byte={effective_end_byte}, total_size={self.total_size}")
+                    raise # Re-raise the original error to be handled by the outer loop
 
                 # After download, update self.filepath to the actual downloaded file if outtmpl had placeholders
                 # For simple 'video.ext', it should match.
@@ -411,10 +459,21 @@ class YTDLPSeekableStream:
                 try:
                     # Use shutil.rmtree for directories
                     import shutil
-                    await self.loop.run_in_executor(None, shutil.rmtree, self.stream_instance_dir)
-                    # print(f"Cleaned up temp directory: {self.stream_instance_dir}")
-                except Exception as e:
-                    print(f"Error cleaning up temp directory {self.stream_instance_dir}: {e}")
+                    max_cleanup_attempts = 3
+                    cleanup_delay = 0.5 # seconds
+                    for attempt in range(max_cleanup_attempts):
+                        try:
+                            await self.loop.run_in_executor(None, shutil.rmtree, self.stream_instance_dir)
+                            # print(f"Cleaned up temp directory: {self.stream_instance_dir} (attempt {attempt + 1})")
+                            break # Success
+                        except Exception as e_cleanup:
+                            if attempt == max_cleanup_attempts - 1:
+                                print(f"Error cleaning up temp directory {self.stream_instance_dir} after {max_cleanup_attempts} attempts: {e_cleanup}")
+                            else:
+                                # print(f"Cleanup attempt {attempt + 1} failed for {self.stream_instance_dir}: {e_cleanup}. Retrying in {cleanup_delay}s...")
+                                await asyncio.sleep(cleanup_delay)
+                except Exception as e: # Should be caught by the inner try-except now
+                    print(f"Unexpected error during temp directory cleanup logic for {self.stream_instance_dir}: {e}")
 
 # --- Helper functions from your code (can be part of streaming.py) ---
 
