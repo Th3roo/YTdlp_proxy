@@ -462,35 +462,26 @@ def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[in
         return start, end_inclusive
 
     else: # "bytes=100-" (from start to end of file)
+        # This block is entered if end_str is empty.
+        # Example: "bytes=100-" or "bytes=0-"
+
         if total_size is None:
-            # Cannot satisfy "100-" if we don't know the end.
-            # Some servers might just stream until connection close, but for Content-Range that's an issue.
-            # Or, we can decide to send a large, fixed-size chunk.
-            # For now, let's assume if total_size is None, this form of range is hard to satisfy perfectly.
-            # However, our YTDLPSeekableStream tries to download ahead.
-            # Let's return a very large end if total_size is unknown, read will cap it.
-            # This is not ideal for Content-Range header.
-            # A better approach for "bytes=100-" when total_size is unknown is to NOT set Content-Range,
-            # or to stream a predefined large chunk and set Content-Range for that chunk.
-            # For now, let's make this function require total_size if end_str is empty for simplicity,
-            # or handle it by returning up to a certain max if truly unknown (but that's for a different scenario)
-            if total_size is None: # Should not happen if we enforce this earlier for "bytes=N-" type
-                 raise ValueError("Range 'bytes=N-' requires a known total file size.")
+            # If the total size is unknown, a range like "bytes=N-" cannot be precisely satisfied
+            # in terms of setting a Content-Range header for the full range.
+            # The stream itself might handle it by streaming until EOF, but parse_range_header
+            # needs to return defined start and end for header construction.
+            # Raising an error here is consistent if the caller expects to use the returned
+            # end value for a Content-Range header with a defined total.
+            raise ValueError("Range 'bytes=N-' requires a known total file size to determine the end boundary for the Content-Range header.")
 
-            # If total_size is 0, the only valid end is -1 (meaning no bytes, range 0--1/0)
-            # or rather, a request for "bytes=0-" on a 0-byte file is tricky.
-            # A 416 should be raised if start >= total_size.
-            # If total_size = 0, then start=0 means start >= total_size.
-            # This is handled by the check: if total_size is not None and start >= total_size: HTTPException(416)
-            # So, if total_size is 0, any start >= 0 will hit that.
-            # Thus, this 'else' branch (meaning end_str is empty) implies total_size > 0 if we passed that check.
-            if total_size == 0: # This case should have been caught by start >= total_size for start=0
-                # However, if a client somehow requests "bytes=0-" for a 0-byte file and bypasses prior checks,
-                # it implies a range of 0 bytes. The end_inclusive should be start-1 to represent 0 length.
-                # Content-Range: bytes 0--1/0
-                 return start, start -1 # e.g. 0, -1 to signify zero length at start
-
-            return start, total_size - 1 # end is inclusive
+        # At this point, total_size is NOT None.
+        # Also, the earlier check `if total_size is not None and start >= total_size:`
+        # would have raised an HTTPException if `start` was at or beyond the end of the file.
+        # Therefore, we can assume `start < total_size`.
+        # Since `start` is non-negative, this also implies `total_size > 0`.
+        # The case `total_size == 0` (and `start == 0`) would have been caught by that prior check, raising 416.
+        # Thus, we can directly calculate the end as total_size - 1.
+        return start, total_size - 1 # end is inclusive
 
 
 # Placeholder for the actual FastAPI app instance if we define routes here
@@ -500,4 +491,5 @@ def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[in
 # We will integrate this into the main app's video router or a new streaming router.
 
     # This line should ideally not be reached if the logic is correct and all paths return or raise.
+    # If it's reached, it indicates a flaw in the conditional logic above.
     raise RuntimeError("Internal logic error: parse_range_header reached end without returning a value or raising an exception.")
