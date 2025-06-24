@@ -194,3 +194,5 @@ cython_debug/
 .cursorindexingignore
 
 *.ytdlp
+
+temp_video_parts/
