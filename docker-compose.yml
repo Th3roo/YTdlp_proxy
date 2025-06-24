@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000" # Expose backend on host port 8000, mapping to container port 8000
+    volumes:
+      - ./backend:/app/backend # Mount host backend directory to container for development (optional)
+    environment:
+      - PYTHONUNBUFFERED=1 # Ensures Python output (like logs) is sent straight to terminal
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000" # Expose frontend on host port 5000, mapping to container port 5000
+    volumes:
+      - ./frontend:/app/frontend # Mount host frontend directory to container for development (optional)
+    depends_on:
+      - backend # Ensures backend starts before frontend (optional, but good practice)
+    environment:
+      - PYTHONUNBUFFERED=1
+      - BACKEND_URL=http://backend:8000 # URL for backend service within Docker network
+
+# Note:
+# 1. The `volumes` are useful for development as code changes are reflected immediately.
+#    For a "production" build, you might remove these and rely on the image contents.
+# 2. The frontend's `app.py` needs to be updated to use the Docker service name for the backend URL.
+#    I will make this change next.

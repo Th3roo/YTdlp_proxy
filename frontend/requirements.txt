@@ -1,0 +1,4 @@
+Flask>=2.0.0
+
+# Test dependencies
+pytest>=7.0.0

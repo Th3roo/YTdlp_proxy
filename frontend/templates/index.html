@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Controller</title>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin-top: 50px; background-color: #f4f4f4; color: #333; }
+        .controls button { padding: 10px 20px; margin: 5px; font-size: 16px; cursor: pointer; border: none; border-radius: 5px; background-color: #007bff; color: white; }
+        .controls button:hover { background-color: #0056b3; }
+        .stream-info { margin-top: 20px; padding: 15px; background-color: white; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .stream-info p { margin: 5px 0; }
+        #streamLink { margin-top: 20px; }
+        #statusMessage { margin-top: 15px; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>Stream Controls</h1>
+
+    <div class="controls">
+        <button id="prevBtn">Previous</button>
+        <button id="playPauseBtn">Play/Pause</button>
+        <button id="nextBtn">Next</button>
+    </div>
+
+    <div id="streamLink">
+        <p>Stream URL: <a href="{{ backend_url }}/stream" target="_blank">{{ backend_url }}/stream</a></p>
+        <p><em>(Note: Actual video streaming not yet implemented in the backend)</em></p>
+    </div>
+
+    <div class="stream-info">
+        <p>Current Status: <span id="currentStatus">Unknown</span></p>
+        <p>Playing: <span id="isPlaying">Unknown</span></p>
+        <p>Video Index: <span id="videoIndex">Unknown</span></p>
+    </div>
+
+    <p id="statusMessage"></p>
+
+    <script>
+        const backendUrl = "{{ backend_url }}"; // Injected by Flask
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        const prevBtn = document.getElementById('prevBtn');
+        const statusMessage = document.getElementById('statusMessage');
+        const currentStatusElem = document.getElementById('currentStatus');
+        const isPlayingElem = document.getElementById('isPlaying');
+        const videoIndexElem = document.getElementById('videoIndex');
+
+        async function sendControlCommand(endpoint, button) {
+            try {
+                button.disabled = true;
+                statusMessage.textContent = 'Sending command...';
+                const response = await fetch(`${backendUrl}${endpoint}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                const data = await response.json();
+                statusMessage.textContent = `Command successful: ${data.status || 'OK'}`;
+                updateStreamInfo(data);
+            } catch (error) {
+                console.error('Error sending command:', error);
+                statusMessage.textContent = `Error: ${error.message}`;
+            } finally {
+                button.disabled = false;
+            }
+        }
+
+        function updateStreamInfo(data) {
+            if (data.status) {
+                currentStatusElem.textContent = data.status;
+            }
+            if (data.hasOwnProperty('is_playing')) {
+                isPlayingElem.textContent = data.is_playing ? 'Yes' : 'No';
+                playPauseBtn.textContent = data.is_playing ? 'Pause' : 'Play';
+            }
+            if (data.hasOwnProperty('current_video_index')) {
+                videoIndexElem.textContent = data.current_video_index;
+            }
+        }
+
+        // Initial state update could be done here if there was a GET endpoint for current state
+
+        playPauseBtn.addEventListener('click', () => sendControlCommand('/control/play_pause', playPauseBtn));
+        nextBtn.addEventListener('click', () => sendControlCommand('/control/next', nextBtn));
+        prevBtn.addEventListener('click', () => sendControlCommand('/control/previous', prevBtn));
+
+        // Try to get initial state (if backend supports it - current backend doesn't have a GET for control state)
+        // For now, we'll just show "Unknown"
+        // A more robust solution would be for the backend to have a GET /control/state endpoint
+        // or for the play_pause button to fetch initial state on load.
+        // For simplicity, we'll leave this as is, the button text will update after the first click.
+        playPauseBtn.textContent = 'Play/Pause'; // Default text
+
+    </script>
+</body>
+</html>
