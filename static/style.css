@@ -184,12 +184,39 @@ button:active {
     background-color: #383838;
 }
 
+.stream-player-section, .stream-link-section {
+    padding: 15px;
+    background-color: #333;
+    border-radius: 6px;
+    margin-bottom: 30px;
+}
+
+#videoPlayer {
+    background-color: #000; /* Черный фон для плеера */
+    border-radius: 4px;
+}
+
+.stream-link-section .link-container {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.stream-link-section input[type="text"] {
+    flex-grow: 1;
+    /* Стили для input уже определены, но можно переопределить если нужно */
+}
+
+
 /* Адаптивность */
 @media (max-width: 600px) {
-    .control-panel {
+    .control-panel, .stream-link-section .link-container {
         flex-direction: column;
     }
-    .playback-controls button {
-        margin-bottom: 10px; /* Кнопки управления в столбик на малых экранах */
+    .playback-controls button, .stream-link-section button {
+        margin-bottom: 10px;
+    }
+    .stream-link-section input[type="text"] {
+        margin-bottom: 10px; /* Отступ для инпута при вертикальном расположении */
     }
 }

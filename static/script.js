@@ -6,11 +6,17 @@ document.addEventListener('DOMContentLoaded', () => {
     const nextButton = document.getElementById('nextButton');
     const videoQueueList = document.getElementById('videoQueueList');
 
+    // Элементы для плеера и постоянной ссылки
+    const videoPlayer = document.getElementById('videoPlayer');
+    const permanentStreamLinkInput = document.getElementById('permanentStreamLink');
+    const copyStreamLinkButton = document.getElementById('copyStreamLinkButton');
+
     const currentTitleDisplay = document.getElementById('currentTitle');
-    const currentLinkDisplay = document.getElementById('currentLink');
+    // const currentLinkDisplay = document.getElementById('currentLink'); // Больше не используется напрямую
     const currentStatusDisplay = document.getElementById('currentStatus');
 
     const API_BASE_URL = '/api/v1';
+    const PERMANENT_STREAM_URL = `${window.location.origin}${API_BASE_URL}/live_stream`;
 
     // --- Функции для взаимодействия с API ---
 
@@ -91,9 +97,15 @@ document.addEventListener('DOMContentLoaded', () => {
     async function playNext() {
         try {
             await fetchApi('/video/play_next', 'POST');
+            // refreshQueueAndCurrentVideo() будет вызван периодическим обновлением
+            // или мы можем вызвать его принудительно, если хотим немедленной реакции.
+            // Принудительный вызов лучше для UX.
             await refreshQueueAndCurrentVideo();
+            // После обновления информации, если видео реально сменилось, плеер должен был получить .load()
+            // Дополнительно можно попробовать запустить воспроизведение, если оно не началось само.
+            // videoPlayer.play().catch(e => console.warn("Autoplay prevented on next:", e));
         } catch (error) {
-            // Ошибка уже обработана
+            // Ошибка уже обработана в fetchApi
         }
     }
 
@@ -101,21 +113,43 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             await fetchApi('/video/play_previous', 'POST');
             await refreshQueueAndCurrentVideo();
+            // videoPlayer.play().catch(e => console.warn("Autoplay prevented on prev:", e));
         } catch (error) {
-            // Ошибка уже обработана
+            // Ошибка уже обработана в fetchApi
         }
     }
 
     async function togglePauseResume() {
-        try {
-            const data = await fetchApi('/video/pause_resume', 'POST');
-            console.log('Pause/Resume Toggled:', data.message);
-            alert(data.message);
-            await refreshQueueAndCurrentVideo(); // Обновить, если статус меняется
-        } catch (error) {
-            // Ошибка уже обработана
+        // Теперь управляем только локальным плеером
+        if (videoPlayer.paused || videoPlayer.ended) {
+            videoPlayer.play().catch(e => {
+                console.error("Error trying to play video:", e);
+                alert("Не удалось запустить воспроизведение. Возможно, видео еще не загрузилось или произошла ошибка.");
+            });
+            // pauseResumeButton.textContent = 'Пауза'; // Обновим текст кнопки
+        } else {
+            videoPlayer.pause();
+            // pauseResumeButton.textContent = 'Старт'; // Обновим текст кнопки
         }
+        // Вызов API /video/pause_resume больше не нужен для фронтенда,
+        // но если он используется для внешней синхронизации, его можно оставить.
+        // Пока уберем его для чистоты управления плеером с фронта.
+        /*
+        try {
+            // const data = await fetchApi('/video/pause_resume', 'POST');
+            // console.log('Pause/Resume API Toggled:', data.message);
+            // await refreshQueueAndCurrentVideo();
+        } catch (error) {
+            // console.error("Error calling pause/resume API:", error);
+        }
+        */
     }
+
+    // Обновление текста кнопки Пауза/Старт в зависимости от состояния плеера
+    videoPlayer.onplay = () => { pauseResumeButton.textContent = 'Пауза'; };
+    videoPlayer.onpause = () => { pauseResumeButton.textContent = 'Старт'; };
+    videoPlayer.onended = () => { pauseResumeButton.textContent = 'Старт'; };
+
 
     // --- Функции для обновления UI ---
 
@@ -224,35 +258,47 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
 
-            // Обновление UI для текущего видео
+            // Обновление UI для текущего видео (информационная панель)
+            // и управление плеером
+            let shouldReloadPlayer = false;
+            // Проверяем, изменился ли ID текущего видео по сравнению с тем, что плеер мог играть до этого.
+            // Мы можем хранить предыдущий ID в data-атрибуте плеера или в глобальной переменной.
+            const previousPlayerVideoId = videoPlayer.dataset.currentVideoIdInQueue;
+
             if (currentVideoToDisplay) {
-                currentTitleDisplay.textContent = currentVideoToDisplay.title || currentVideoToDisplay.original_url || 'N/A';
-                const link = currentVideoToDisplay.downloaded_path || currentVideoToDisplay.original_url || '#';
-                currentLinkDisplay.href = link;
-                // Улучшенное отображение текста ссылки
-                if (currentVideoToDisplay.downloaded_path) {
-                    currentLinkDisplay.textContent = `Локальный файл (${currentVideoToDisplay.downloaded_path.split(/[\\/]/).pop()})`;
-                } else if (currentVideoToDisplay.original_url) {
-                    currentLinkDisplay.textContent = 'Открыть источник';
-                } else {
-                    currentLinkDisplay.textContent = '-';
-                }
+                currentTitleDisplay.textContent = currentVideoToDisplay.title || currentVideoToDisplay.original_url || 'Загрузка...';
                 currentStatusDisplay.textContent = currentVideoToDisplay.status || 'N/A';
-            } else {
-                currentTitleDisplay.textContent = '-';
-                currentLinkDisplay.href = '#';
-                currentLinkDisplay.textContent = '-';
-                currentStatusDisplay.textContent = 'Нет активного видео';
+
+                if (currentVideoToDisplay.id_in_queue !== previousPlayerVideoId) {
+                    shouldReloadPlayer = true;
+                    videoPlayer.dataset.currentVideoIdInQueue = currentVideoToDisplay.id_in_queue;
+                }
+            } else { // Нет активного видео (возможно, будет играть заглушка)
+                currentTitleDisplay.textContent = 'Нет активного видео (заглушка)';
+                currentStatusDisplay.textContent = 'Очередь пуста или видео не выбрано';
+                if (previousPlayerVideoId !== 'placeholder') { // Если до этого играло нечто иное, чем заглушка
+                    shouldReloadPlayer = true;
+                    videoPlayer.dataset.currentVideoIdInQueue = 'placeholder'; // Специальный маркер для заглушки
+                }
+            }
+
+            // Если ID текущего видео изменился, или если плеер еще не был инициализирован (первый запуск),
+            // или если мы перешли с видео на заглушку (или наоборот).
+            // `videoPlayer.src` всегда указывает на `/api/v1/live_stream`.
+            // `load()` заставит плеер переподключиться и запросить актуальный контент.
+            if (shouldReloadPlayer || !videoPlayer.dataset.initialized) {
+                console.log("Reloading player source due to current video change or initialization.");
+                videoPlayer.load(); // Перезагружаем источник плеера
+                // videoPlayer.play().catch(e => console.warn("Autoplay prevented:", e)); // Попытка автовоспроизведения
+                videoPlayer.dataset.initialized = "true";
             }
 
         } catch (error) {
             console.error("Error refreshing queue and current video:", error);
-            renderQueue([], null); // Показать пустую очередь в случае ошибки
-            // Сбросить отображение текущего видео
-            currentTitleDisplay.textContent = '-';
-            currentLinkDisplay.href = '#';
-            currentLinkDisplay.textContent = '-';
-            currentStatusDisplay.textContent = 'Ошибка загрузки данных';
+            renderQueue([], null);
+            currentTitleDisplay.textContent = 'Ошибка';
+            currentStatusDisplay.textContent = 'Не удалось загрузить данные';
+            videoPlayer.dataset.currentVideoIdInQueue = 'error'; // Статус ошибки для плеера
         }
     }
 
@@ -291,4 +337,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // (Опционально) Периодическое обновление очереди и текущего видео
     setInterval(refreshQueueAndCurrentVideo, 5000); // каждые 5 секунд
+
+    // --- Инициализация плеера и ссылки ---
+    function initializePlayerAndLink() {
+        permanentStreamLinkInput.value = PERMANENT_STREAM_URL;
+        videoPlayer.src = PERMANENT_STREAM_URL;
+        // videoPlayer.load(); // Можно вызвать load, чтобы сразу пошла заглушка, если очередь пуста
+                           // или это сделает refreshQueueAndCurrentVideo при первом вызове
+    }
+
+    copyStreamLinkButton.addEventListener('click', () => {
+        permanentStreamLinkInput.select();
+        permanentStreamLinkInput.setSelectionRange(0, 99999); // For mobile devices
+        try {
+            document.execCommand('copy');
+            alert('Ссылка на стрим скопирована в буфер обмена!');
+        } catch (err) {
+            alert('Не удалось скопировать ссылку. Пожалуйста, скопируйте вручную.');
+            console.error('Fallback: Oops, unable to copy', err);
+        }
+        window.getSelection().removeAllRanges(); // Снять выделение
+    });
+
+    // Вызов инициализации при загрузке
+    initializePlayerAndLink();
 });

@@ -25,12 +25,27 @@
             </div>
         </div>
 
+        <div class="stream-player-section">
+            <h2>Плеер</h2>
+            <video id="videoPlayer" controls width="100%" preload="metadata">
+                Ваш браузер не поддерживает тег video.
+            </video>
+        </div>
+
+        <div class="stream-link-section">
+            <h2>Ссылка на постоянный стрим (для OBS, VLC и т.д.):</h2>
+            <div class="link-container">
+                <input type="text" id="permanentStreamLink" readonly>
+                <button id="copyStreamLinkButton">Копировать</button>
+            </div>
+        </div>
+
         <div class="current-video-section">
-            <h2>Текущее видео</h2>
+            <h2>Информация о текущем видео в потоке</h2>
             <div id="currentVideoDisplay">
                 <p><strong>Название:</strong> <span id="currentTitle">-</span></p>
-                <p><strong>Ссылка для плеера:</strong> <a id="currentLink" href="#" target="_blank">-</a></p>
-                <p><strong>Статус:</strong> <span id="currentStatus">-</span></p>
+                <!-- <p><strong>Ссылка для плеера:</strong> <a id="currentLink" href="#" target="_blank">-</a></p> -->
+                <p><strong>Статус в очереди:</strong> <span id="currentStatus">-</span></p>
             </div>
         </div>
 
