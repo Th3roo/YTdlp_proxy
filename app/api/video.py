@@ -45,23 +45,37 @@ async def read_file_chunked(file_path: str, start: int, end: int, chunk_size: in
         actual_end = min(end, file_size - 1) # Убедимся, что не читаем за пределами файла
         bytes_to_read = actual_end - start + 1
 
-        async with await loop.run_in_executor(None, open, file_path, "rb") as f:
+        if bytes_to_read <= 0:
+            yield b""
+            return
+
+        f = await loop.run_in_executor(None, open, file_path, "rb")
+        try:
             await loop.run_in_executor(None, f.seek, start)
             remaining_bytes = bytes_to_read
             while remaining_bytes > 0:
                 read_amount = min(chunk_size, remaining_bytes)
                 chunk = await loop.run_in_executor(None, f.read, read_amount)
                 if not chunk:
-                    break # Конец файла раньше, чем ожидалось
+                    # EOF reached earlier than expected.
+                    print(f"Warning: EOF reached prematurely in read_file_chunked for {file_path}. Expected {remaining_bytes} more bytes, got 0 from read.")
+                    break
                 yield chunk
                 remaining_bytes -= len(chunk)
-    except FileNotFoundError:
-        print(f"Error: Placeholder file not found at {file_path}")
-        # Можно yield какой-то стандартный "error" chunk или просто ничего
-        yield b""
+        finally:
+            if f:
+                await loop.run_in_executor(None, f.close)
+
+    except FileNotFoundError as e_fnf:
+        print(f"Error in read_file_chunked: Placeholder file not found at {file_path}. Error: {e_fnf}")
+        # Raising an error is generally better than yielding b"" if Content-Length was already set,
+        # as it allows higher-level error handling or results in a clearer broken stream
+        # rather than a content mismatch.
+        raise RuntimeError(f"Streaming failed: file {file_path} not found during read_file_chunked operation.") from e_fnf
     except Exception as e:
-        print(f"Error streaming placeholder file {file_path}: {e}")
-        yield b""
+        print(f"Error streaming placeholder file {file_path} during read_file_chunked operation: {e}")
+        # Similar to FileNotFoundError, raise to indicate failure.
+        raise RuntimeError(f"Streaming failed for file {file_path} during read_file_chunked operation.") from e
 
 # Убираем дублирование глобальных переменных, они уже объявлены выше при импорте VideoInQueue
 # video_queue_store: Dict[str, VideoInQueue] = {}
