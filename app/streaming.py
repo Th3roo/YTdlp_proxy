@@ -2,408 +2,454 @@ import io
 import os
 import re
 import time
-import uuid
-import asyncio
-from typing import Annotated, Optional, Dict, Any
+from typing import Annotated, Optional, Any, Dict # Added Optional, Any, Dict for YTDLPSeekableStream annotations
+import uuid # Added for unique filenames, keep for now
+import asyncio # Added for async operations, keep for now
 
-from fastapi import FastAPI, HTTPException, Header, Request
-from fastapi.responses import StreamingResponse
+# FastAPI specific imports are not strictly needed here anymore as class is used by API layer
+# from fastapi import HTTPException # HTTPException is used
+from fastapi import HTTPException # HTTPException is used directly
 import yt_dlp
 
-# Директория для временных частей видео
+# Директория для временных частей видео - ОСТАВЛЕНО ИЗ СТАРОГО КОДА, МОЖЕТ ПРИГОДИТЬСЯ
 TEMP_VIDEO_PARTS_DIR = "temp_video_parts"
 os.makedirs(TEMP_VIDEO_PARTS_DIR, exist_ok=True)
 
-def get_safe_filename(name: str) -> str:
+def get_safe_filename(name: str) -> str: # ОСТАВЛЕНО ИЗ СТАРОГО КОДА
     """ Sanitize a string to be used as a filename. """
     name = re.sub(r'[^\w\s-]', '', name).strip()
     name = re.sub(r'[-\s]+', '-', name)
     return name if len(name) <= 200 else name[:200] # Limit length
 
+
 class YTDLPSeekableStream:
-    def __init__(self, url: str, ydl_opts: dict = None, loop: Optional[asyncio.AbstractEventLoop] = None):
+
+    def __init__(self, url: str, ydl_opts: dict = None, loop: Optional[asyncio.AbstractEventLoop] = None): # Added loop for compatibility with existing code structure if needed
         self.url = url
         self.ydl_opts = ydl_opts or {}
-        # Ensure some defaults for streaming
+        # Ensure some defaults for streaming, these can be overridden by passed ydl_opts
         self.ydl_opts.setdefault('noplaylist', True)
-        self.ydl_opts.setdefault('quiet', True)
-        self.ydl_opts.setdefault('noprogress', True)
+        self.ydl_opts.setdefault('quiet', True) # From your new code
+        self.ydl_opts.setdefault('noprogress', True) # From your new code
+        # self.ydl_opts.setdefault('debug_printtraffic', True) # For debugging if needed
 
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
-        self.loop = loop or asyncio.get_event_loop()
+        self.loop = loop or asyncio.get_event_loop() # Keep for potential async operations if any part of old structure uses it
 
-        try:
-            self.info_dict = self.ydl.extract_info(url, download=False)
-            if not self.info_dict:
-                raise HTTPException(status_code=404, detail="Video metadata not found by yt-dlp")
-        except yt_dlp.utils.DownloadError as e:
-            raise HTTPException(status_code=502, detail=f"yt-dlp failed to extract info: {e}")
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Unexpected error during info extraction: {e}")
+        # Initialize filepath *immediately* - From your new code
+        # This initial filepath might be temporary if title/id are not yet known
+        # or if yt-dlp generates a more specific name later.
+        # The key is that self.filepath must be defined before any operation that might use it.
 
-        self.format = self._get_selected_format()
-        if not self.format:
-            raise HTTPException(status_code=400, detail="No suitable streamable format found by yt-dlp.")
+        # We need a unique identifier for the temporary file/directory for this stream instance
+        # to avoid collisions if multiple streams are processed concurrently.
+        self.stream_instance_id = str(uuid.uuid4())
+        self.instance_temp_dir = os.path.join(TEMP_VIDEO_PARTS_DIR, self.stream_instance_id)
+        os.makedirs(self.instance_temp_dir, exist_ok=True)
 
-        # Generate a unique filepath for this stream instance
-        base_filename = get_safe_filename(self.info_dict.get("title", "untitled_video"))
-        unique_id = str(uuid.uuid4())
-        # yt-dlp adds its own extension based on format, so we just provide a base path.
-        # However, for partial downloads, yt-dlp might create .part files or use specific naming.
-        # We'll let yt-dlp manage the exact final name within its outtmpl.
-        # The .ytdlp extension was from your original code, let's see if we need it or if yt-dlp's native naming is better.
-        # For now, let's use a simpler unique name and let 'outtmpl' in _ensure_downloaded define the full path.
-        # We need a reliable way to get the final path, though.
-        # Let's stick to a unique directory for each stream for now.
-        self.stream_instance_dir = os.path.join(TEMP_VIDEO_PARTS_DIR, unique_id)
-        os.makedirs(self.stream_instance_dir, exist_ok=True)
-
-        # The actual file path will be determined by yt-dlp's outtmpl when downloading.
-        # We need to predict it or retrieve it after download.
-        # For `outtmpl`, we'll use a simple name like 'video' inside the unique directory.
-        self.download_outtmpl = os.path.join(self.stream_instance_dir, 'video.%(ext)s')
-
-        # Predict the filepath based on outtmpl and format extension
-        # This is tricky as the exact extension might vary.
-        # Let's assume the first extension from the format if available.
-        fmt_ext = self.format.get('ext', 'mp4') # Default to mp4 if not found
-        self.filepath = os.path.join(self.stream_instance_dir, f'video.{fmt_ext}')
-
+        # Initial dummy filepath, will be refined after info_dict extraction
+        # The '.ytdlp' extension was in your original code, let's keep it for consistency
+        # if it signifies a special handling or partial download state.
+        # yt-dlp itself will add the correct extension based on the format.
+        # So, using a base name inside the unique directory.
+        self.base_filename_in_dir = "video_part" # A generic base name
+        self.filepath = os.path.join(self.instance_temp_dir, self.base_filename_in_dir + ".ytdlp") # Initial dummy path
 
         self._current_pos = 0
+        self._file = None # File handle
+
+        # Extract info (synchronously for now, as in your original code)
+        try:
+            # print(f"YTDLPSeekableStream: Extracting info for URL: {self.url} with opts: {self.ydl_opts}")
+            self.info_dict = self.ydl.extract_info(url, download=False)
+            if not self.info_dict:
+                self._cleanup_temp_dir() # Clean up if info extraction fails fundamentally
+                raise HTTPException(status_code=404, detail="Video metadata not found (yt-dlp info_dict is None)")
+        except yt_dlp.utils.DownloadError as e:
+            self._cleanup_temp_dir()
+            # print(f"YTDLPSeekableStream: yt-dlp DownloadError during info extraction: {e}")
+            if "Unsupported URL" in str(e):
+                 raise HTTPException(status_code=400, detail=f"Unsupported URL: {self.url}")
+            elif "Video unavailable" in str(e): # Common error message
+                 raise HTTPException(status_code=404, detail=f"Video unavailable: {e}")
+            else:
+                 raise HTTPException(status_code=502, detail=f"yt-dlp failed to extract video info: {e}") # Bad Gateway or similar
+        except Exception as e:
+            self._cleanup_temp_dir()
+            # print(f"YTDLPSeekableStream: Unexpected error during info extraction: {e}")
+            raise HTTPException(status_code=500, detail=f"Unexpected error extracting video info: {e}")
+
+
+        self.format = self._get_selected_format() # Uses self.info_dict and self.ydl_opts
+        if not self.format:
+            self._cleanup_temp_dir()
+            raise HTTPException(status_code=400, detail="No suitable streamable format found by yt-dlp.")
+
+        # Update/refine filepath with the *correct* filename based on extracted info and format
+        # yt-dlp's prepare_filename can give us the expected filename.
+        # We need to pass an info_dict that yt-dlp can use (usually the one for the selected format).
+        # The outtmpl should point to our unique directory.
+        temp_format_info_for_prepare = self.format.copy() # Use a copy of the selected format
+        temp_format_info_for_prepare['id'] = self.info_dict.get('id', 'temp_id')
+        temp_format_info_for_prepare['title'] = self.info_dict.get('title', 'temp_title')
+        # Ensure 'ext' is present in the format info, as prepare_filename uses it.
+        if 'ext' not in temp_format_info_for_prepare:
+            temp_format_info_for_prepare['ext'] = self.format.get('video_ext', self.format.get('audio_ext', 'mp4'))
+
+
+        # Define outtmpl for yt-dlp download operations. This will be the final path.
+        # We use a fixed name within our unique instance directory.
+        # yt-dlp will add the correct extension based on the format.
+        self.download_outtmpl = os.path.join(self.instance_temp_dir, self.base_filename_in_dir + '.%(ext)s')
+
+        # Predict the final filepath based on this outtmpl and the selected format's extension
+        # This is crucial for opening the file later.
+        final_ext = self.format.get('ext', 'mp4') # Default to mp4 if ext not in format
+        self.filepath = os.path.join(self.instance_temp_dir, self.base_filename_in_dir + f'.{final_ext}')
+        # print(f"YTDLPSeekableStream: Final filepath set to: {self.filepath}")
+
+
         self.total_size = self.format.get("filesize") or self.format.get("filesize_approx")
-        if not self.total_size and self.format.get('fragments'): # For fragmented streams like HLS/DASH native
-            # This class isn't designed for native HLS/DASH (where yt-dlp gives .m3u8)
-            # It's for progressive download of single files.
-            # If filesize is truly unknown for a progressive stream, it's problematic for Range requests.
-            pass # total_size remains None
+        if not self.total_size and self.format.get('fragments'):
+             # This class is mainly for progressive downloads.
+             # If it's a manifest (HLS/DASH) and filesize is None, Range requests are problematic.
+             # yt-dlp might download the manifest itself as the "file" if not handled.
+             # For now, we proceed, but total_size being None will affect client behavior.
+             # print(f"Warning: Format {self.format.get('format_id')} is fragmented or filesize is unknown.")
+             pass
 
-        self._file = None
-        self._lock = asyncio.Lock() # Lock for file operations and download state
+        self._lock = asyncio.Lock() # For async operations, if any are introduced later or for file access
 
-    def _get_selected_format(self):
-        # Prefer formats that are single files and suitable for streaming
-        # Example: format_selector = "best[protocol^=http][ext=mp4]/best[ext=mp4]/best"
-        # Your original logic is good for selecting based on format_id or requested_formats
+
+    def _get_selected_format(self): # From your new code, with minor adjustments for self.ydl_opts
         formats = self.info_dict.get("formats", [])
         if not formats:
             return None
 
-        # If a specific format ID is requested in ydl_opts, try to find it
-        requested_format_id = self.ydl_opts.get("format")
-        if requested_format_id:
+        # Check if a specific format ID was requested in ydl_opts (e.g., from client)
+        # This should be the primary way to select if provided.
+        requested_format_selector = self.ydl_opts.get("format") # This might be a selector string or format_id
+
+        if requested_format_selector:
+            # Try to find a direct match for format_id first
             for fmt in formats:
-                if fmt.get("format_id") == requested_format_id:
-                    if fmt.get('protocol') in ('http', 'https'): # Ensure it's a downloadable http/s format
+                if fmt.get("format_id") == requested_format_selector:
+                    if fmt.get('protocol') in ('http', 'https'): # Ensure it's downloadable
+                        # print(f"DEBUG: Directly matched requested format_id: {requested_format_selector}")
                         return fmt
+            # If not a direct ID match, yt-dlp's process_video_result will use the selector
+            # print(f"DEBUG: Using format selector: {requested_format_selector}")
 
-        # Fallback to yt-dlp's default selection or a good streaming format
-        # We want a single file, not a manifest like m3u8 for this class
+        # Fallback selection logic if no specific format was requested or matched directly
+        # This part is similar to your original logic for default selection.
+        # We want a single, progressive, downloadable file.
         try:
-            # Let yt-dlp determine the best format if not specified or found
-            # We need to ensure it's a progressive download format
-            temp_ydl_opts = self.ydl_opts.copy()
-            temp_ydl_opts['skip_download'] = True # Already default but good to be explicit
+            # Let yt-dlp process the info_dict with the given format selector (or its default if none)
+            # This will populate 'requested_formats' or select a single format.
+            # Crucially, we need to ensure this processing doesn't initiate a download.
+            processed_info = self.ydl.process_video_result(self.info_dict.copy(), download=False)
 
-            # Filter for progressive, http/https downloadable formats
-            # This selector prioritizes MP4. You might want to adjust.
-            # It also tries to avoid manifest formats if possible for this pseudo-streaming.
-            # "bv*+ba/b" means best video with audio, or best overall if not available.
-            # "[protocol^=http]" ensures it's downloadable.
-            # "[vcodec!=none][acodec!=none]" ensures it has both video and audio.
-            # We need to be more specific to avoid DASH manifests if filesize is None.
+            # Check 'requested_formats' first (if populated by a selector like "bestvideo+bestaudio")
+            selected_formats_list = processed_info.get("requested_formats")
+            if selected_formats_list:
+                # This list contains formats chosen by yt-dlp to satisfy the selector.
+                # For streaming, we typically need a single merged format if video+audio was requested.
+                # The first format in this list is usually the merged one or the best single one.
+                chosen_fmt = selected_formats_list[0]
+                if (chosen_fmt.get('protocol') in ('http', 'https') and
+                    not chosen_fmt.get('is_fragmented') and # Avoid native HLS/DASH manifests
+                    chosen_fmt.get('fragment_base_url') is None):
+                    # print(f"DEBUG: Selected format from 'requested_formats': {chosen_fmt.get('format_id')}")
+                    return chosen_fmt
+                else:
+                    # print(f"DEBUG: Format from 'requested_formats' ({chosen_fmt.get('format_id')}) is not suitable (e.g. fragmented).")
+                    pass # Fall through to other checks
 
-            # A simpler approach: iterate and find a good candidate
-            # Prioritize non-fragmented, non-live, http/https formats with both codecs and known filesize.
-            good_candidates = []
-            for f in formats:
-                # Stricter check: ensure it's not fragmented and has actual filesize
-                if (f.get('vcodec') != 'none' and f.get('acodec') != 'none' and
-                        f.get('protocol') in ('http', 'https') and
-                        not f.get('is_live') and
-                        not f.get('is_fragmented') and # Explicitly avoid fragmented
-                        f.get('fragment_base_url') is None and # Another check for fragmentation
-                        f.get('filesize') is not None): # Prioritize known filesize
-                    good_candidates.append(f)
+            # If 'requested_formats' is not there or not suitable, check if 'processed_info' itself is the chosen format
+            if ("format_id" in processed_info and
+                processed_info.get('protocol') in ('http', 'https') and
+                not processed_info.get('is_fragmented') and
+                processed_info.get('fragment_base_url') is None):
+                # This happens if format selector was for a single stream or yt-dlp resolved to one.
+                # print(f"DEBUG: Selected format from processed_info itself: {processed_info.get('format_id')}")
+                return processed_info
 
-            if not good_candidates: # Fallback to allow filesize_approx if no exact filesize found
-                 for f in formats:
-                    if (f.get('vcodec') != 'none' and f.get('acodec') != 'none' and
-                            f.get('protocol') in ('http', 'https') and
-                            not f.get('is_live') and
-                            not f.get('is_fragmented') and
-                            f.get('fragment_base_url') is None and
-                            (f.get('filesize') is not None or f.get('filesize_approx') is not None)):
-                        good_candidates.append(f)
+            # If still no suitable format, log and return None
+            # print(f"DEBUG: No suitable single, progressive, HTTP/S format found after processing. Available formats: {len(formats)}")
+            # for f_idx, f_val in enumerate(formats):
+            #     print(f"  Format {f_idx}: id={f_val.get('format_id')}, proto={f_val.get('protocol')}, frag={f_val.get('is_fragmented')}, ext={f_val.get('ext')}")
 
+            # Fallback: iterate through all formats and pick the best available progressive one if the above failed
+            # This is a more generic fallback.
+            best_fallback = None
+            for fmt in sorted(formats, key=lambda f: (f.get('height', 0), f.get('tbr', 0)), reverse=True):
+                if (fmt.get('protocol') in ('http', 'https') and
+                    not fmt.get('is_fragmented') and
+                    fmt.get('fragment_base_url') is None and
+                    fmt.get('vcodec') != 'none'): # Ensure it has video
+                    # print(f"DEBUG: Using fallback selection: Found suitable format {fmt.get('format_id')}")
+                    best_fallback = fmt
+                    break
+            if best_fallback:
+                return best_fallback
 
-            if good_candidates:
-                # Sort by filesize (descending) or some other preference if needed
-                # Prefer exact filesize, then approximate. Then by resolution or bitrate if desired.
-                good_candidates.sort(key=lambda f: (
-                    f.get('filesize') or 0,
-                    f.get('filesize_approx') or 0,
-                    f.get('height') or 0 # Prefer higher resolution as a tie-breaker
-                ), reverse=True)
-                # print(f"Selected format: {good_candidates[0]}")
-                return good_candidates[0]
-
-            # If no "good" progressive found, try yt-dlp's internal logic for requested_formats
-            # This part is from your original code and might pick a format even if not ideal.
-            # But we should still filter it.
-            try:
-                processed_info = self.ydl.process_video_result(self.info_dict, download=False)
-                selected_formats_list = processed_info.get("requested_formats")
-                if selected_formats_list:
-                    for sf in selected_formats_list:
-                        # Ensure the selected format is also suitable (single file, http/s)
-                        if (sf.get('vcodec') != 'none' and
-                            sf.get('protocol') in ('http', 'https') and
-                            not sf.get('is_fragmented') and
-                            sf.get('fragment_base_url') is None):
-                            # print(f"Selected format from requested_formats: {sf}")
-                            return sf
-                    # Fallback to the first in list if it's downloadable, but less ideal
-                    if (selected_formats_list[0].get('protocol') in ('http', 'https') and
-                        not selected_formats_list[0].get('is_fragmented')):
-                        # print(f"Selected format (fallback from requested_formats): {selected_formats_list[0]}")
-                        return selected_formats_list[0]
-
-                # Fallback for cases where 'requested_formats' isn't populated but a single format is chosen by ytdl
-                if ("format_id" in processed_info and
-                    processed_info.get('protocol') in ('http', 'https') and
-                    not processed_info.get('is_fragmented') and
-                    processed_info.get('fragment_base_url') is None and
-                    processed_info.get('vcodec') != 'none'): # Ensure it has video
-                    # print(f"Selected format (processed_info fallback): {processed_info}")
-                    return processed_info
-
-            except Exception as e_proc:
-                print(f"Warning: Error during yt-dlp process_video_result for format selection: {e_proc}")
-
-
-            print(f"Warning: Could not determine a single, suitable progressive format. Formats available: {formats}")
+            # print("Warning: _get_selected_format: No suitable format found after all checks.")
             return None
 
-        except (yt_dlp.utils.YtDlpError, KeyError) as e:
-            print(f"Error selecting format with yt-dlp: {e}")
+        except (yt_dlp.utils.YtDlpError, KeyError) as e_proc:
+            # print(f"Warning: Error during yt-dlp process_video_result for format selection: {e_proc}")
             return None
 
-    async def _ensure_downloaded(self, start_byte: int, end_byte: Optional[int]):
-        # This method needs to be async if it uses the asyncio lock
-        # and if yt_dlp.download is run in an executor.
-        # Your original code ran ydl_segment.download synchronously.
-        # For FastAPI, long-running synchronous calls should be in run_in_executor.
 
-        # Check if file exists and if the required range is already downloaded
-        # This is a simplified check; real partial download management is complex.
-        # For now, we assume yt-dlp's 'continuedl' and Range headers handle it.
-        # A more robust solution would track downloaded segments.
-
-        max_retries = 3 # Reduced for faster failure in some cases
+    async def _ensure_downloaded(self, start_byte: int, end_byte: Optional[int]): # Made async
+        # This method is now async and uses run_in_executor for blocking yt-dlp calls.
+        max_retries = 5
         retry_delay = 1
 
-        # Ensure end_byte is not None for the Range header if total_size is unknown for this segment
-        # However, yt-dlp usually requires an end for Range requests.
-        # If end_byte is truly unknown, we might download a fixed chunk ahead.
-        effective_end_byte = end_byte
-        if effective_end_byte is None: # If total size is unknown, download a speculative chunk
-            effective_end_byte = start_byte + (5 * 1024 * 1024) # Download 5MB ahead if end is not known
+        # Determine the actual end byte for the Range header for this download operation
+        # If end_byte is None (e.g. unknown total size, initial large chunk request),
+        # yt-dlp might download a fixed chunk or up to where it can.
+        # For 'continuedl', precise Range might not always be needed if the file already exists partially.
+        range_header_val = None
+        if end_byte is not None:
+            if start_byte <= end_byte: # Ensure valid range
+                range_header_val = f"bytes={start_byte}-{end_byte}"
+        # else: If end_byte is None, we might want to download from start_byte onwards without specifying end.
+        # Some servers support "bytes=start_byte-". yt-dlp's internal logic handles this.
+        # Forcing via http_headers is a strong hint.
+        # If we don't set range_header_val, yt-dlp might try to download the whole thing,
+        # but 'continuedl' should pick up if file exists.
 
-        # Check if file exists and if the current known size covers the request
-        # This is a very basic check. yt-dlp's continuedl is the main mechanism.
+        # Check if the file exists and if the requested segment seems to be covered.
+        # This is a basic check. yt-dlp's 'continuedl' is the primary mechanism.
+        # We need to be careful if end_byte is far ahead or None.
         try:
             if os.path.exists(self.filepath):
                 current_file_size = await self.loop.run_in_executor(None, os.path.getsize, self.filepath)
-                if current_file_size >= effective_end_byte + 1:
-                    # print(f"Range {start_byte}-{effective_end_byte} seems to be already downloaded.")
-                    return # Assume it's downloaded
+                # If end_byte is specified and current_file_size covers it, assume it's downloaded.
+                if end_byte is not None and current_file_size >= end_byte + 1:
+                    # print(f"DEBUG: Range {start_byte}-{end_byte} appears to be already downloaded (file size: {current_file_size}).")
+                    return
+                # If end_byte is None, and we are seeking (start_byte > 0), and file exists,
+                # assume previous parts are there and yt-dlp will continue.
+                # This part is tricky without knowing exactly what's needed.
         except FileNotFoundError:
-            pass # File doesn't exist, proceed to download
+            pass # File doesn't exist, proceed to download.
+
 
         for attempt in range(max_retries):
             try:
                 dl_opts = self.ydl_opts.copy()
-                # Critical: Use the selected format's ID.
-                # 'format' in ydl_opts might be a selector string, not the final ID.
                 dl_opts.update({
-                    "format": self.format["format_id"],
-                    "outtmpl": self.download_outtmpl, # Use the template
+                    "format": self.format["format_id"], # Use the specifically selected format ID
+                    "outtmpl": self.download_outtmpl,   # Use the outtmpl with extension placeholder
                     "continuedl": True,
                     "noprogress": True,
                     "quiet": True,
-                    # "ratelimit": "1M", # For testing to simulate slower downloads
-                    # "fragment_retries": 10, # yt-dlp internal retries for fragments
-                    # "retry_sleep_functions": {"http": lambda n: 0.5 * (2 ** n)}, # Exponential backoff for http
+                    # "ratelimit": "500K", # For testing slower downloads
+                    # "fragment_retries": 10, # yt-dlp internal retries
+                    # "retry_sleep_functions": {"http": lambda n: 0.5 * (2 ** n)},
                 })
 
-                # Add Range header for partial download
-                # yt-dlp might not use this if the server doesn't support it well,
-                # or if continuedl is more effective for its strategy.
-                # Forcing it via http_headers is a strong hint.
-                # Conditional Range header:
-                # Only apply if total_size is known and we have a specific end_byte for the current request segment.
-                # If total_size is unknown, or if end_byte for this segment is speculative (e.g. initial large chunk),
-                # let yt-dlp manage with continuedl, as precise Range might be problematic.
-                if self.total_size and end_byte is not None: # 'end_byte' here is the original from caller, not 'effective_end_byte'
-                    # Ensure effective_end_byte (which might be capped by total_size) is used.
-                    # And start_byte must be less than effective_end_byte.
-                    if effective_end_byte is not None and start_byte <= effective_end_byte:
-                        dl_opts["http_headers"] = {"Range": f"bytes={start_byte}-{effective_end_byte}"}
-                        # print(f"DEBUG: Using Range header: bytes={start_byte}-{effective_end_byte}")
-                    else:
-                        # This case (e.g. start_byte > effective_end_byte) should ideally be caught before attempting download.
-                        # If effective_end_byte is None here but self.total_size is known, it means we want the rest of the file.
-                        dl_opts["http_headers"] = {"Range": f"bytes={start_byte}-"}
-                        # print(f"DEBUG: Using Range header: bytes={start_byte}-")
+                # Conditionally add Range header. yt-dlp also has --download-sections.
+                # Using http_headers for Range is more direct for some servers.
+                if range_header_val:
+                    dl_opts["http_headers"] = {"Range": range_header_val}
+                    # print(f"DEBUG: Attempt {attempt+1}: Downloading with Range: {range_header_val} for {self.url}")
                 # else:
-                    # print(f"DEBUG: Not using explicit Range header. total_size: {self.total_size}, end_byte: {end_byte}")
+                    # print(f"DEBUG: Attempt {attempt+1}: Downloading (no explicit Range header, relying on continuedl) for {self.url}")
 
-
-                # print(f"Attempting to download range {start_byte}-{effective_end_byte} for {self.url} with opts: {dl_opts}")
 
                 # Run synchronous yt-dlp download in an executor thread
-                try:
-                    with yt_dlp.YoutubeDL(dl_opts) as ydl_segment:
-                        await self.loop.run_in_executor(None, ydl_segment.download, [self.url])
-                except yt_dlp.utils.DownloadError as de:
-                    # Log more details for DownloadError, especially for conflicting range
-                    err_msg = str(de)
-                    print(f"yt-dlp DownloadError occurred: {err_msg} for URL {self.url} with opts {dl_opts}")
-                    if "conflicting range" in err_msg.lower():
-                        print(f"Conflicting range error details: start_byte={start_byte}, effective_end_byte={effective_end_byte}, total_size={self.total_size}")
-                    raise # Re-raise the original error to be handled by the outer loop
+                with yt_dlp.YoutubeDL(dl_opts) as ydl_segment:
+                    await self.loop.run_in_executor(None, ydl_segment.download, [self.url])
 
-                # After download, update self.filepath to the actual downloaded file if outtmpl had placeholders
-                # For simple 'video.ext', it should match.
-                # If ydl.prepare_filename was used with info_dict after download, it would be more robust.
-                # Let's try to find the downloaded file if our predicted self.filepath doesn't exist.
-                if not os.path.exists(self.filepath):
-                    # This logic assumes 'video.%(ext)s' was used.
-                    # We need a more robust way to get the actual filename yt-dlp used.
-                    # One way is to list dir and find the file, but that's hacky.
-                    # The best is if yt-dlp could return the filename from download call, or if prepare_filename is reliable.
-                    # For now, if self.filepath (predicted) doesn't exist, this might be an issue.
-                    # Let's re-evaluate self.filepath based on the downloaded file if possible.
-                    # This is tricky because yt-dlp might merge video and audio into a new file.
-                    # If 'outtmpl' is fixed (no placeholders like title/id), it's simpler.
-                    # Our current self.download_outtmpl is 'video.%(ext)s'.
-                    # The actual extension comes from self.format['ext'].
-                    # So self.filepath should be correct.
-
-                    # Check if the file exists after download attempt
-                    if not os.path.exists(self.filepath):
-                         print(f"Warning: File {self.filepath} still not found after download attempt for {self.url}")
-                         # raise FileNotFoundError(f"yt-dlp finished but file {self.filepath} not found.")
-                         # Don't raise here, let read() fail if it can't open.
-                return
+                # After download, verify the file exists. self.filepath should be correct now.
+                if not await self.loop.run_in_executor(None, os.path.exists, self.filepath):
+                    # This is unexpected if ydl.download completed without error.
+                    # print(f"ERROR: File {self.filepath} not found after yt-dlp download completed for {self.url}.")
+                    # It might be that the extension predicted was wrong, or yt-dlp named it differently.
+                    # We could try to find the file in self.instance_temp_dir if this happens.
+                    # For now, assume self.filepath prediction is correct.
+                    # If this error occurs, the logic for self.filepath generation needs review.
+                    raise FileNotFoundError(f"Download finished but target file {self.filepath} not found.")
+                return # Success
 
             except yt_dlp.utils.DownloadError as e:
                 err_str = str(e).lower()
+                # print(f"DEBUG: yt-dlp DownloadError (attempt {attempt+1}): {err_str} for URL {self.url}")
+
                 if "http error 416" in err_str or "requested range not satisfiable" in err_str:
-                    # This can happen if the range is already fully downloaded or invalid
-                    # print(f"HTTP 416 for {self.url}, range {start_byte}-{effective_end_byte}. Assuming complete or invalid.")
-                    # If it's truly invalid, the client shouldn't have requested it.
-                    # If it means "already have it", that's okay.
-                    # We should check file size here.
-                    if os.path.exists(self.filepath): # If file exists, maybe it's fine
-                        return
-                    # If it doesn't exist, then 416 is a problem
+                    # This means the server cannot satisfy the range.
+                    # It could be because the range is invalid, or the content is already fully there.
+                    # If the file exists, we can assume it's okay for continuedl.
+                    if await self.loop.run_in_executor(None, os.path.exists, self.filepath):
+                        # print(f"DEBUG: HTTP 416, but file {self.filepath} exists. Assuming segment is available or issue is with range spec.")
+                        return # Assume okay if file exists, let read handle it.
                     if attempt == max_retries - 1:
+                        self._cleanup_temp_dir()
                         raise HTTPException(status_code=416, detail=f"Requested Range Not Satisfiable: {e}")
 
-                # Common transient errors
-                transient_errors = ["eof occurred in violation of protocol", "connection reset by peer", "ssl_handshake_error"]
+                transient_errors = [
+                    "eof occurred in violation of protocol", "connection reset by peer",
+                    "ssl_handshake_error", "urlopen error [errno 110] connection timed out",
+                    "read error [errno 104] connection reset by peer" # Common on poor connections
+                ]
                 if any(sub in err_str for sub in transient_errors):
                     if attempt == max_retries - 1:
-                        raise HTTPException(status_code=503, detail=f"yt-dlp download error after retries: {e}")
-                    print(f"Download error (attempt {attempt + 1}/{max_retries}) for {self.url}: {e}. Retrying in {retry_delay}s...")
-                    await asyncio.sleep(retry_delay) # Use asyncio.sleep
+                        self._cleanup_temp_dir()
+                        raise HTTPException(status_code=503, detail=f"yt-dlp download error after retries (transient): {e}")
+                    # print(f"Download error (attempt {attempt + 1}/{max_retries}, transient) for {self.url}: {e}. Retrying in {retry_delay}s...")
+                    await asyncio.sleep(retry_delay)
                     retry_delay *= 2
-                else:
-                    raise HTTPException(status_code=502, detail=f"yt-dlp download error: {e}") from e
+                else: # Non-transient DownloadError
+                    self._cleanup_temp_dir()
+                    raise HTTPException(status_code=502, detail=f"yt-dlp download error (non-transient): {e}") from e
+
+            except FileNotFoundError as e: # Catch the FileNotFoundError we might raise above
+                self._cleanup_temp_dir()
+                raise HTTPException(status_code=500, detail=f"Failed to find downloaded file: {e}") from e
 
             except Exception as e:
+                # print(f"DEBUG: Unexpected error in _ensure_downloaded (attempt {attempt+1}): {e}")
                 if attempt == max_retries - 1:
-                    raise HTTPException(status_code=500, detail=f"Unexpected error in _ensure_downloaded after retries: {e}") from e
-                print(f"Unexpected error (attempt {attempt + 1}/{max_retries}) for {self.url}: {e}. Retrying in {retry_delay}s...")
+                    self._cleanup_temp_dir()
+                    raise HTTPException(status_code=500, detail=f"An unexpected error occurred in _ensure_downloaded after retries: {e}") from e
+                # print(f"Unexpected error (attempt {attempt + 1}/{max_retries}) for {self.url}: {e}. Retrying in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
                 retry_delay *= 2
 
 
-    async def _open_file(self):
-        # This method should be async due to _ensure_downloaded
-        async with self._lock: # Ensure only one coroutine tries to open/initially download
+    async def _open_file(self): # Made async
+        # This method should be async due to _ensure_downloaded and file ops in executor
+        async with self._lock:
             if self._file is None:
-                # Initial download for the very first part (e.g., first 1-2 MB for metadata)
-                # The amount to download initially depends on where player typically reads metadata from.
+                # Ensure at least the initial part of the file is downloaded.
+                # This helps in getting metadata embedded in the file if needed by the player quickly.
+                # Download a small initial chunk (e.g., 1-2MB) unless total_size is smaller.
                 initial_chunk_size = 1 * 1024 * 1024 # 1MB
-                end_byte_for_initial = initial_chunk_size -1
-                if self.total_size and self.total_size < initial_chunk_size:
+                end_byte_for_initial = initial_chunk_size - 1
+                if self.total_size and self.total_size > 0 and self.total_size < initial_chunk_size:
                     end_byte_for_initial = self.total_size - 1
+                elif self.total_size == 0: # Handle 0-byte files (should be rare for video)
+                    end_byte_for_initial = -1 # Indicates no download needed if file is truly 0 bytes
 
-                await self._ensure_downloaded(0, end_byte_for_initial if self.total_size else None) # Pass None if total_size unknown
+                if end_byte_for_initial >= 0 : # Only download if there's something to download
+                    # print(f"DEBUG: _open_file: Ensuring initial download (0-{end_byte_for_initial}) for {self.filepath}")
+                    await self._ensure_downloaded(0, end_byte_for_initial)
+                # else:
+                    # print(f"DEBUG: _open_file: Skipping initial download for 0-byte or invalid size file ({self.filepath})")
+
 
                 try:
+                    # print(f"DEBUG: _open_file: Opening file {self.filepath} in 'rb' mode.")
                     self._file = await self.loop.run_in_executor(None, open, self.filepath, "rb")
                 except FileNotFoundError:
-                    # This shouldn't happen if _ensure_downloaded worked or raised.
-                    # But as a fallback.
-                    print(f"Error: File {self.filepath} not found after _ensure_downloaded for initial open.")
-                    raise HTTPException(status_code=500, detail=f"Stream file {self.filepath} not found after download attempt.")
+                    # This can happen if _ensure_downloaded failed to create the file,
+                    # or if the file is 0 bytes and was never created, or if prediction of filepath was wrong.
+                    # print(f"ERROR: _open_file: File {self.filepath} not found after _ensure_downloaded attempt.")
+                    # Attempt to create an empty file if it was supposed to be 0 bytes and doesn't exist
+                    if self.total_size == 0 and end_byte_for_initial == -1:
+                        try:
+                            # print(f"DEBUG: _open_file: Creating empty file for 0-byte content at {self.filepath}")
+                            await self.loop.run_in_executor(None, open, self.filepath, "ab").close() # Create empty file
+                            self._file = await self.loop.run_in_executor(None, open, self.filepath, "rb")
+                        except Exception as e_create:
+                            # print(f"ERROR: _open_file: Failed to create or open 0-byte file {self.filepath}: {e_create}")
+                            self._cleanup_temp_dir()
+                            raise HTTPException(status_code=500, detail=f"Stream file {self.filepath} could not be opened or created (0-byte case).")
+                    else:
+                        self._cleanup_temp_dir()
+                        raise HTTPException(status_code=500, detail=f"Stream file {self.filepath} not found after download attempt.")
+                except Exception as e_open: # Other errors during open
+                    # print(f"ERROR: _open_file: Could not open file {self.filepath}: {e_open}")
+                    self._cleanup_temp_dir()
+                    raise HTTPException(status_code=500, detail=f"Could not open stream file {self.filepath}: {e_open}")
+
             return self._file
 
-    async def read(self, size: int = -1) -> bytes:
-        # This method should be async
-        file = await self._open_file() # Ensure file is open and initial part downloaded
+
+    async def read(self, size: int = -1) -> bytes: # Made async
+        # This method is async due to _open_file and potential _ensure_downloaded calls.
+        file_handle = await self._open_file() # Ensures file is open and initial part downloaded.
         if size == 0:
             return b""
+        if not file_handle: # Should have been caught by _open_file raising HTTPException
+             # print("ERROR: read: file_handle is None, _open_file should have raised.")
+             return b"" # Should not happen
 
         async with self._lock: # Lock for read operations that might trigger further downloads
-            current_known_filesize = 0
+            current_file_size_on_disk = 0
             try:
-                current_known_filesize = await self.loop.run_in_executor(None, os.path.getsize, self.filepath)
-            except FileNotFoundError: # Should be caught by _open_file, but for safety:
-                 # This implies the file disappeared after _open_file or initial download failed silently
-                 print(f"File {self.filepath} vanished before read operation.")
-                 return b"" # Or raise error
+                # Get current actual size on disk, it might have grown since last check.
+                current_file_size_on_disk = await self.loop.run_in_executor(None, os.path.getsize, self.filepath)
+            except FileNotFoundError:
+                 # File disappeared after open? Highly unlikely with lock, but defensive.
+                 # print(f"ERROR: read: File {self.filepath} vanished before read operation after being opened.")
+                 return b"" # Or raise
 
-
-            # Determine the target end byte for this read operation
-            if size == -1: # Read to end (or a large chunk if total_size is unknown)
-                if self.total_size:
-                    target_end_for_read = self.total_size -1
-                    read_size = self.total_size - self._current_pos
+            # Determine the target end position for this read operation on the stream
+            # target_read_end_stream_pos is the stream position *after* this read completes.
+            if size == -1: # Read until end of known total_size, or a large chunk if unknown
+                if self.total_size is not None:
+                    # We want to read up to self.total_size
+                    # The number of bytes to request from file.read()
+                    bytes_to_request_from_file = self.total_size - self._current_pos
+                    target_read_end_stream_pos = self.total_size
                 else:
-                    # Read a large chunk if total size is unknown
-                    read_size = 10 * 1024 * 1024
-                    target_end_for_read = self._current_pos + read_size -1
-            else:
-                read_size = size
-                target_end_for_read = self._current_pos + size - 1
+                    # Total size unknown, read a speculative large chunk
+                    bytes_to_request_from_file = 10 * 1024 * 1024 # 10MB
+                    target_read_end_stream_pos = self._current_pos + bytes_to_request_from_file
+            else: # Specific size requested
+                bytes_to_request_from_file = size
+                target_read_end_stream_pos = self._current_pos + size
 
-            # If the known total size is available and target_end_for_read exceeds it, cap it.
-            if self.total_size and target_end_for_read >= self.total_size:
-                target_end_for_read = self.total_size - 1
-                read_size = self.total_size - self._current_pos
-                if read_size < 0: read_size = 0
+            # Cap read if it goes beyond known total_size
+            if self.total_size is not None and target_read_end_stream_pos > self.total_size:
+                target_read_end_stream_pos = self.total_size
+                bytes_to_request_from_file = self.total_size - self._current_pos
+
+            if bytes_to_request_from_file < 0: # Should not happen if logic is correct
+                bytes_to_request_from_file = 0
+
+            if bytes_to_request_from_file == 0:
+                return b"" # Nothing to read based on current pos and total_size
+
+            # The actual end byte index we need on disk for this read: target_read_end_stream_pos - 1
+            # (e.g. if current_pos=0, size=100, target_read_end_stream_pos=100, need bytes 0-99 on disk)
+            required_disk_byte_idx = target_read_end_stream_pos - 1
 
 
-            # Ensure the required part is downloaded if not already covered
-            if target_end_for_read >= current_known_filesize and current_known_filesize < (self.total_size or float('inf')):
-                # print(f"Read needs up to {target_end_for_read}, current file size {current_known_filesize}. Downloading more.")
-                # Download from current_known_filesize up to target_end_for_read (or further if total_size unknown)
-                # If total_size is None, _ensure_downloaded will download a speculative chunk.
-                await self._ensure_downloaded(current_known_filesize, target_end_for_read if self.total_size else None)
+            # Ensure the required part is downloaded if not already covered by current_file_size_on_disk
+            # We need data up to `required_disk_byte_idx`.
+            # Download if `required_disk_byte_idx` is beyond or at `current_file_size_on_disk`.
+            # (i.e. `current_file_size_on_disk` needs to be at least `required_disk_byte_idx + 1`)
+            if required_disk_byte_idx >= current_file_size_on_disk:
+                # And also ensure we are not trying to download beyond total_size if known
+                if not (self.total_size is not None and self._current_pos >= self.total_size) :
+                    # print(f"DEBUG: read: Need byte {required_disk_byte_idx}, disk size {current_file_size_on_disk}. Downloading segment.")
+                    # Download from current_file_size_on_disk up to required_disk_byte_idx.
+                    # Or, if total_size is unknown, _ensure_downloaded will download a speculative chunk from current_file_size_on_disk.
+                    # The start_byte for download should be where the current file ends on disk.
+                    download_start_byte = current_file_size_on_disk
+                    download_end_byte = required_disk_byte_idx
+                    if self.total_size is None: # If total size unknown, pass None for end_byte to download a chunk
+                        download_end_byte = None
+
+                    await self._ensure_downloaded(download_start_byte, download_end_byte)
+
 
             # Perform the actual read from the file
-            await self.loop.run_in_executor(None, file.seek, self._current_pos)
-            data = await self.loop.run_in_executor(None, file.read, read_size)
+            await self.loop.run_in_executor(None, file_handle.seek, self._current_pos)
+            # print(f"DEBUG: read: Reading {bytes_to_request_from_file} bytes from {self.filepath} at offset {self._current_pos}")
+            data = await self.loop.run_in_executor(None, file_handle.read, bytes_to_request_from_file)
+            # print(f"DEBUG: read: Got {len(data)} bytes.")
 
             self._current_pos += len(data)
             return data
 
-    async def seek(self, offset: int, whence: int = io.SEEK_SET) -> int:
+
+    async def seek(self, offset: int, whence: int = io.SEEK_SET) -> int: # Made async for lock
         # This method can remain mostly synchronous in logic but uses async lock
         # as it modifies _current_pos which is used by async read.
         async with self._lock:
@@ -413,142 +459,190 @@ class YTDLPSeekableStream:
                 new_pos = self._current_pos + offset
             elif whence == io.SEEK_END:
                 if self.total_size is None:
-                    # If we don't know total size, SEEK_END is problematic.
-                    # We could try to force a download of "everything" or raise.
-                    # For now, let's try to estimate by downloading a large chunk if not already.
-                    # This is complex. Simpler to raise or require total_size for SEEK_END.
-                    print("Warning: SEEK_END used on stream with unknown total size. Trying to fetch more.")
-                    await self._ensure_downloaded(self._current_pos, None) # Download a large chunk
-                    # Re-check total_size if it got updated by _ensure_downloaded (if format info improved)
-                    if not self.total_size:
-                         raise ValueError("SEEK_END is not supported for unknown file size after download attempt.")
+                    # SEEK_END is problematic if total_size is unknown.
+                    # We could try to force a download of "everything" to discover size, but that's risky.
+                    # Best to raise an error or make it clear this is not fully supported.
+                    # For now, let's attempt to download a chunk to see if total_size gets populated
+                    # or if the file grows sufficiently. This is heuristic.
+                    # print("Warning: SEEK_END used on stream with unknown total size. Attempting to download more to discover size.")
+                    # Try to download from current pos to an arbitrary further point, or let _ensure_downloaded decide
+                    # This might be a large download if not careful.
+                    # Let's try to download a small chunk from current known end of file on disk.
+                    current_disk_size = 0
+                    if os.path.exists(self.filepath):
+                        current_disk_size = await self.loop.run_in_executor(None, os.path.getsize, self.filepath)
+                    await self._ensure_downloaded(current_disk_size, None) # Download a speculative chunk from end of current file
+
+                    # Re-check total_size if it got updated (e.g., if format info improved or file fully downloaded)
+                    # This is optimistic. yt-dlp doesn't usually update self.total_size post-initialization.
+                    if self.total_size is None: # If still unknown
+                        # Fallback: if file exists, use its current size on disk as a proxy for total_size.
+                        # This is only safe if we believe the file is now complete.
+                        if os.path.exists(self.filepath):
+                             current_disk_size_after_dl = await self.loop.run_in_executor(None, os.path.getsize, self.filepath)
+                             # Heuristic: if a significant download happened, maybe it's all there?
+                             # This is not very reliable.
+                             # print(f"Warning: Total size still unknown after download attempt. Using current disk size {current_disk_size_after_dl} for SEEK_END.")
+                             # self.total_size = current_disk_size_after_dl # Tentatively set it
+                             # Better to raise if it's still None.
+                             self._cleanup_temp_dir()
+                             raise ValueError("SEEK_END is not reliably supported when total file size is unknown and couldn't be determined.")
+                    # If self.total_size became known, proceed:
                     new_pos = self.total_size + offset
 
                 else: # total_size is known
                     new_pos = self.total_size + offset
             else:
+                self._cleanup_temp_dir()
                 raise ValueError("Invalid whence value. Use io.SEEK_SET, io.SEEK_CUR, or io.SEEK_END.")
 
             if new_pos < 0:
-                # For pseudo-streaming, seeking before 0 doesn't make sense.
-                # Standard file seek might allow it and then fail on read.
-                new_pos = 0
+                new_pos = 0 # Standard behavior for seek
 
-            # If seeking beyond known total_size, cap it? Or let read handle it?
-            # Standard seek allows this. Read will then return empty bytes.
+            # If seeking beyond known total_size, cap it to total_size?
+            # Standard file seek allows seeking beyond EOF; read then returns empty.
+            # Let's mimic that. If new_pos > self.total_size, reads from there should yield b"".
             # if self.total_size is not None and new_pos > self.total_size:
             #    new_pos = self.total_size
 
             self._current_pos = new_pos
-            # print(f"Seeked to {self._current_pos}")
+            # print(f"DEBUG: seek: Stream position set to {self._current_pos}")
             return self._current_pos
 
     def tell(self) -> int:
-        # This can be synchronous as it just returns a variable
+        # This can be synchronous as it just returns a variable protected by the lock indirectly.
         return self._current_pos
 
-    async def close(self):
-        # This should be async if file close is blocking, or use run_in_executor
-        async with self._lock:
+    def _cleanup_temp_dir(self):
+        # Synchronous cleanup helper, call from non-async contexts if needed or convert to async
+        if hasattr(self, 'instance_temp_dir') and os.path.exists(self.instance_temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(self.instance_temp_dir)
+                # print(f"DEBUG: Cleaned up temp directory: {self.instance_temp_dir}")
+            except Exception as e_cleanup:
+                # print(f"Warning: Error cleaning up temp directory {self.instance_temp_dir}: {e_cleanup}")
+                pass # Non-critical, log and continue
+
+    async def close(self): # Made async
+        # This should be async for file close in executor and lock.
+        async with self._lock: # Ensure exclusive access for closing
             if self._file:
-                await self.loop.run_in_executor(None, self._file.close)
-                self._file = None
-
-            # Cleanup the unique directory for this stream instance
-            if self.stream_instance_dir and os.path.exists(self.stream_instance_dir):
                 try:
-                    # Use shutil.rmtree for directories
+                    await self.loop.run_in_executor(None, self._file.close)
+                    # print(f"DEBUG: Closed file handle for {self.filepath}")
+                except Exception as e_close:
+                    # print(f"Warning: Error closing file {self.filepath}: {e_close}")
+                    pass # Log and continue to directory cleanup
+                finally:
+                    self._file = None # Mark as closed
+
+            # Cleanup the unique temporary directory for this stream instance
+            if hasattr(self, 'instance_temp_dir') and await self.loop.run_in_executor(None, os.path.exists, self.instance_temp_dir):
+                try:
                     import shutil
-                    max_cleanup_attempts = 3
-                    cleanup_delay = 0.5 # seconds
-                    for attempt in range(max_cleanup_attempts):
-                        try:
-                            await self.loop.run_in_executor(None, shutil.rmtree, self.stream_instance_dir)
-                            # print(f"Cleaned up temp directory: {self.stream_instance_dir} (attempt {attempt + 1})")
-                            break # Success
-                        except Exception as e_cleanup:
-                            if attempt == max_cleanup_attempts - 1:
-                                print(f"Error cleaning up temp directory {self.stream_instance_dir} after {max_cleanup_attempts} attempts: {e_cleanup}")
-                            else:
-                                # print(f"Cleanup attempt {attempt + 1} failed for {self.stream_instance_dir}: {e_cleanup}. Retrying in {cleanup_delay}s...")
-                                await asyncio.sleep(cleanup_delay)
-                except Exception as e: # Should be caught by the inner try-except now
-                    print(f"Unexpected error during temp directory cleanup logic for {self.stream_instance_dir}: {e}")
+                    # print(f"DEBUG: Attempting to clean up temp directory: {self.instance_temp_dir}")
+                    await self.loop.run_in_executor(None, shutil.rmtree, self.instance_temp_dir)
+                    # print(f"DEBUG: Successfully cleaned up temp directory: {self.instance_temp_dir}")
+                except Exception as e_cleanup:
+                    # print(f"Warning: Error cleaning up temp directory {self.instance_temp_dir} during close: {e_cleanup}")
+                    pass # Non-critical for the stream's immediate operation, but good to log.
 
-# --- Helper functions from your code (can be part of streaming.py) ---
 
-def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[int, int]:
-    """Parses a Range header string (e.g., "bytes=0-1023") into start and end bytes."""
-    if not range_header or not range_header.startswith("bytes="):
-        raise ValueError("Invalid Range header format")
+# --- Helper functions (parse_range_header from your new code) ---
+
+def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[int, int]: # Return type changed to inclusive end
+    """
+    Parses a Range header string (e.g., "bytes=0-1023") into start and *inclusive* end bytes.
+    Raises HTTPException(416) if the range is invalid or unsatisfiable.
+    """
+    if not range_header or not range_header.lower().startswith("bytes="):
+        # print(f"DEBUG: parse_range_header: Invalid format or missing 'bytes=': {range_header}")
+        raise HTTPException(status_code=400, detail="Invalid Range header format: Must start with 'bytes='")
 
     range_spec = range_header.split("=")[1]
-    start_str, end_str = range_spec.split("-") if "-" in range_spec else (range_spec, "")
+    parts = range_spec.split("-")
+    start_str = parts[0]
+    end_str = parts[1] if len(parts) > 1 and parts[1] else None # Handle "bytes=100-"
 
     try:
         start = int(start_str)
     except ValueError:
-        raise ValueError("Invalid start byte in Range header")
+        # print(f"DEBUG: parse_range_header: Invalid start byte: {start_str}")
+        raise HTTPException(status_code=400, detail="Invalid start byte in Range header")
 
     if start < 0:
-        raise ValueError("Start byte cannot be negative")
-
-    if total_size is not None and start >= total_size:
-        # This is a case for HTTP 416 Range Not Satisfiable
-        raise HTTPException(status_code=416, detail="Range request start offset is past the end of the file.")
+        # print(f"DEBUG: parse_range_header: Start byte cannot be negative: {start}")
+        raise HTTPException(status_code=416, detail="Start byte in Range header cannot be negative.")
 
 
-    if end_str: # "bytes=0-100"
+    # If total_size is known, validate start against it.
+    if total_size is not None:
+        if start >= total_size:
+            # This is a common case for 416.
+            # print(f"DEBUG: parse_range_header: Start byte {start} is at or after end of content ({total_size}). Raising 416.")
+            raise HTTPException(status_code=416, detail=f"Range start offset {start} is beyond content length {total_size}.")
+
+    # Determine end_inclusive
+    if end_str: # e.g., "bytes=0-100" or "bytes=50-50"
         try:
-            # HTTP Range end is inclusive, so if client sends "bytes=0-99", they want 100 bytes.
-            # Our internal 'end' will be exclusive for slicing or length calculation.
-            # Or, more simply, length = end_inclusive - start + 1
             end_inclusive = int(end_str)
         except ValueError:
-            raise ValueError("Invalid end byte in Range header")
+            # print(f"DEBUG: parse_range_header: Invalid end byte: {end_str}")
+            raise HTTPException(status_code=400, detail="Invalid end byte in Range header")
 
         if end_inclusive < start:
-            raise ValueError("End byte cannot be less than start byte")
+            # print(f"DEBUG: parse_range_header: End byte {end_inclusive} < start byte {start}. Raising 416.")
+            raise HTTPException(status_code=416, detail="End byte in Range header cannot be less than start byte.")
 
         if total_size is not None:
+            # Cap end_inclusive at the last available byte of the content.
             end_inclusive = min(end_inclusive, total_size - 1)
+            # After capping, it's possible end_inclusive < start if original end_inclusive was valid but total_size was small.
+            # Example: Range "bytes=50-100" for a file of size 60. Start=50. Capped end_inclusive becomes 59. Valid.
+            # Example: Range "bytes=70-100" for a file of size 60. Start=70. This should have been caught by `start >= total_size`.
+            # Let's re-check if, after capping, end < start. This implies the capped range is invalid.
+            # This scenario should ideally be covered by `start >= total_size` for most cases.
+            # However, consider range "0-10" for a 0-byte file. start=0, total_size=0. `start >= total_size` -> 416. Correct.
+            if end_inclusive < start and total_size > 0 : # total_size > 0 condition to allow 0- (-1) for 0 byte file
+                # print(f"DEBUG: parse_range_header: After capping end byte ({end_inclusive}), it's less than start byte ({start}). Raising 416.")
+                raise HTTPException(status_code=416, detail="Range invalid after adjusting to content length (end < start).")
 
-        # For our internal use, let's define `end` as the byte *after* the last one requested.
-        # So, if range is "0-99", length is 100. start=0, end_for_slicing=100.
-        # However, the function returns the inclusive end as per HTTP.
-        # Let's clarify: this function should return the *inclusive* end byte for Content-Range.
-        # The actual number of bytes to send is (end_inclusive - start + 1).
-        return start, end_inclusive
 
-    else: # "bytes=100-" (from start to end of file)
-        # This block is entered if end_str is empty.
-        # Example: "bytes=100-" or "bytes=0-"
-
+    else: # e.g., "bytes=100-" (from start to end of file)
         if total_size is None:
-            # If the total size is unknown, a range like "bytes=N-" cannot be precisely satisfied
-            # in terms of setting a Content-Range header for the full range.
-            # The stream itself might handle it by streaming until EOF, but parse_range_header
-            # needs to return defined start and end for header construction.
-            # Raising an error here is consistent if the caller expects to use the returned
-            # end value for a Content-Range header with a defined total.
-            raise ValueError("Range 'bytes=N-' requires a known total file size to determine the end boundary for the Content-Range header.")
+            # If total size is unknown, "bytes=N-" implies streaming until EOF.
+            # For header construction (Content-Range), this is problematic.
+            # The caller (stream_video endpoint) must handle this.
+            # parse_range_header's role is to return a concrete start and end if possible for that header.
+            # If it can't, it should indicate this. Returning (start, None) was one way.
+            # However, your new stream_video logic expects a concrete end for Content-Range.
+            # Let's adhere to the function signature: tuple[int, int].
+            # We must raise an error if we can't determine a concrete end for "N-".
+            # print(f"DEBUG: parse_range_header: Range 'bytes=N-' with unknown total_size. Cannot determine concrete end. Raising 400 or 416.")
+            # A 400 might be more appropriate as the request is malformed *in the context of requiring a concrete range*.
+            # Or, the server could choose to not support "N-" when total_size is unknown for ranged responses.
+            # Given the usage for Content-Range, a 416 might be if it implies "cannot satisfy this precise request".
+            # Let's use 400 as it's more about the request lacking info (total_size) to be fully processed for a specific Content-Range.
+            raise HTTPException(status_code=400, detail="Range 'bytes=N-' requires a known total file size to determine the end boundary for Content-Range header when total size is not known.")
 
-        # At this point, total_size is NOT None.
-        # Also, the earlier check `if total_size is not None and start >= total_size:`
-        # would have raised an HTTPException if `start` was at or beyond the end of the file.
-        # Therefore, we can assume `start < total_size`.
-        # Since `start` is non-negative, this also implies `total_size > 0`.
-        # The case `total_size == 0` (and `start == 0`) would have been caught by that prior check, raising 416.
-        # Thus, we can directly calculate the end as total_size - 1.
-        return start, total_size - 1 # end is inclusive
+        # total_size is known.
+        # The `start >= total_size` check above already handled invalid start.
+        # So, here, start < total_size.
+        end_inclusive = total_size - 1
+        # Handle 0-byte file case: "bytes=0-", total_size=0. start=0. end_inclusive = -1.
+        # This is a convention for "empty range".
+
+    # Final check for 0-byte file, ensuring end_inclusive is -1 if start is 0.
+    if total_size == 0:
+        if start == 0:
+            end_inclusive = -1 # Represents an empty range at the start of a 0-byte file.
+        else: # start > 0 for a 0-byte file, already handled by `start >= total_size` -> 416
+            pass
 
 
-# Placeholder for the actual FastAPI app instance if we define routes here
-# from fastapi import APIRouter
-# stream_router = APIRouter()
-# @stream_router.get(...)
-# We will integrate this into the main app's video router or a new streaming router.
+    # print(f"DEBUG: parse_range_header: Parsed: start={start}, end_inclusive={end_inclusive} (total_size={total_size})")
+    return start, end_inclusive
 
-    # This line should ideally not be reached if the logic is correct and all paths return or raise.
-    # If it's reached, it indicates a flaw in the conditional logic above.
-    raise RuntimeError("Internal logic error: parse_range_header reached end without returning a value or raising an exception.")
+# The FastAPI app and endpoint definitions will be in app/api/video.py or app/main.py
+# This file should focus on the YTDLPSeekableStream class and related helpers.
