@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stream Control</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>Управление стримом</h1>
+
+        <div class="control-panel">
+            <div class="add-video">
+                <h2>Добавить видео/стрим</h2>
+                <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
+                <button id="addVideoButton">Добавить в очередь</button>
+            </div>
+
+            <div class="playback-controls">
+                <h2>Управление воспроизведением</h2>
+                <button id="prevButton">Предыдущее</button>
+                <button id="pauseResumeButton">Пауза/Старт</button>
+                <button id="nextButton">Следующее</button>
+            </div>
+        </div>
+
+        <div class="current-video-section">
+            <h2>Текущее видео</h2>
+            <div id="currentVideoDisplay">
+                <p><strong>Название:</strong> <span id="currentTitle">-</span></p>
+                <p><strong>Ссылка для плеера:</strong> <a id="currentLink" href="#" target="_blank">-</a></p>
+                <p><strong>Статус:</strong> <span id="currentStatus">-</span></p>
+            </div>
+        </div>
+
+        <div class="queue-section">
+            <h2>Очередь</h2>
+            <ul id="videoQueueList">
+                <!-- Элементы очереди будут добавлены сюда -->
+                <li class="placeholder">Очередь пуста</li>
+            </ul>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

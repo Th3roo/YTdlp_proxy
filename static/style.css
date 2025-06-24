@@ -1,0 +1,195 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #1a1a1a; /* Темный фон как у cobalt.tools */
+    color: #e0e0e0; /* Светлый текст */
+    line-height: 1.6;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #2c2c2c; /* Чуть светлее фон для основного контейнера */
+    border-radius: 8px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.5);
+}
+
+h1, h2 {
+    color: #68d2f4; /* Акцентный цвет, похожий на cobalt.tools */
+    border-bottom: 1px solid #444;
+    padding-bottom: 10px;
+    margin-top: 0;
+}
+
+h1 {
+    text-align: center;
+    margin-bottom: 30px;
+}
+
+h2 {
+    margin-bottom: 15px;
+    font-size: 1.4em;
+}
+
+.control-panel {
+    display: flex;
+    gap: 30px;
+    margin-bottom: 30px;
+    flex-wrap: wrap; /* Для адаптивности */
+}
+
+.add-video, .playback-controls {
+    flex: 1;
+    padding: 15px;
+    background-color: #333;
+    border-radius: 6px;
+    min-width: 250px; /* Минимальная ширина для блоков */
+}
+
+input[type="url"] {
+    width: calc(100% - 22px); /* Учитываем padding и border */
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #555;
+    border-radius: 4px;
+    background-color: #252525;
+    color: #e0e0e0;
+    font-size: 1em;
+}
+
+button {
+    padding: 10px 15px;
+    border: none;
+    border-radius: 4px;
+    background-color: #68d2f4; /* Акцентный цвет */
+    color: #1a1a1a; /* Темный текст на кнопке */
+    font-size: 1em;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+}
+
+button:hover {
+    background-color: #8ae9ff;
+}
+
+button:active {
+    background-color: #4cc1e0;
+}
+
+.playback-controls button {
+    margin-right: 10px;
+}
+.playback-controls button:last-child {
+    margin-right: 0;
+}
+
+
+.current-video-section, .queue-section {
+    padding: 15px;
+    background-color: #333;
+    border-radius: 6px;
+    margin-bottom: 30px;
+}
+
+#currentVideoDisplay p {
+    margin: 5px 0;
+}
+
+#currentVideoDisplay span, #currentVideoDisplay a {
+    color: #f0f0f0;
+    font-weight: normal;
+}
+#currentVideoDisplay a {
+    color: #68d2f4;
+    text-decoration: none;
+}
+#currentVideoDisplay a:hover {
+    text-decoration: underline;
+}
+
+
+#videoQueueList {
+    list-style-type: none;
+    padding: 0;
+}
+
+#videoQueueList li {
+    padding: 10px;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    margin-bottom: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+#videoQueueList li.placeholder {
+    justify-content: center;
+    color: #888;
+    font-style: italic;
+    justify-content: center; /* Для .placeholder */
+}
+
+#videoQueueList li .video-title {
+    flex-grow: 1;
+    margin-right: 10px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#videoQueueList li .video-status {
+    font-size: 0.85em;
+    color: #999;
+    margin-left: 10px; /* Отступ от предыдущего элемента */
+    white-space: nowrap;
+    flex-shrink: 0; /* Чтобы статус не сжимался */
+}
+
+#videoQueueList li button.download-btn {
+    padding: 5px 10px;
+    font-size: 0.85em;
+    background-color: #555;
+    color: #ddd;
+    margin-left: 10px;
+    flex-shrink: 0;
+}
+#videoQueueList li button.download-btn:hover {
+    background-color: #666;
+}
+
+#videoQueueList li .downloading-indicator,
+#videoQueueList li .downloaded-indicator {
+    font-size: 0.85em;
+    color: #aaa;
+    margin-left: 10px;
+    padding: 5px 10px;
+    background-color: #444;
+    border-radius: 3px;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+#videoQueueList li .downloaded-indicator {
+    color: #77dd77; /* Зеленый для скачанного */
+    background-color: #3a5a3a;
+}
+
+
+#videoQueueList li.active-in-queue {
+    border-left: 3px solid #68d2f4;
+    background-color: #383838;
+}
+
+/* Адаптивность */
+@media (max-width: 600px) {
+    .control-panel {
+        flex-direction: column;
+    }
+    .playback-controls button {
+        margin-bottom: 10px; /* Кнопки управления в столбик на малых экранах */
+    }
+}
