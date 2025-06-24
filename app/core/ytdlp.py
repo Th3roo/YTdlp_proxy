@@ -1,20 +1,23 @@
 import yt_dlp
 import asyncio
 from typing import Dict, Any, Optional
+from app.config import YDL_OPTS # Import consolidated YDL_OPTS
 
 async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
     """
     Асинхронно получает информацию о видео с помощью yt-dlp.
     Возвращает словарь с информацией или None в случае ошибки.
     """
-    ydl_opts = {
-        'noplaylist': True,       # Не обрабатывать плейлисты, только одиночные видео
-        'quiet': True,            # Меньше вывода в консоль
+    # Start with base YDL_OPTS and add/override specific options for get_video_info
+    ydl_opts = YDL_OPTS.copy()
+    ydl_opts.update({
         'extract_flat': 'in_playlist', # Если это элемент плейлиста, получить только базовую инфу
         'skip_download': True,    # Не скачивать видео, только метаданные
         'forcejson': True,        # Принудительно выводить JSON
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # Предпочтительный формат
-    }
+        # 'noplaylist': True, # Already in base YDL_OPTS
+        # 'quiet': True, # Already in base YDL_OPTS
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # Предпочтительный формат для метаданных
+    })
 
     loop = asyncio.get_event_loop()
 
@@ -59,13 +62,15 @@ async def download_video(url: str, output_path: str = "downloads/%(title)s.%(ext
     if download_dir and not os.path.exists(download_dir):
         os.makedirs(download_dir, exist_ok=True)
 
-    ydl_opts = {
-        'noplaylist': True,
-        'quiet': True,
+    # Start with base YDL_OPTS and add/override specific options for download_video
+    ydl_opts = YDL_OPTS.copy()
+    ydl_opts.update({
         'outtmpl': output_path, # Шаблон для имени выходного файла
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # Скачиваем лучшее качество
+        # 'noplaylist': True, # Already in base YDL_OPTS
+        # 'quiet': True, # Already in base YDL_OPTS
         # 'progress_hooks': [my_hook], # Можно добавить хуки для отслеживания прогресса
-    }
+    })
 
     loop = asyncio.get_event_loop()
 
