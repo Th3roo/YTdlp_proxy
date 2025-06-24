@@ -178,6 +178,18 @@ button:active {
     background-color: #3a5a3a;
 }
 
+#videoQueueList li button.cancel-download-btn {
+    padding: 5px 10px;
+    font-size: 0.85em;
+    background-color: #c06170; /* Красноватый для отмены */
+    color: #fff;
+    margin-left: 10px;
+    flex-shrink: 0;
+}
+#videoQueueList li button.cancel-download-btn:hover {
+    background-color: #d96f7f;
+}
+
 
 #videoQueueList li.active-in-queue {
     border-left: 3px solid #68d2f4;

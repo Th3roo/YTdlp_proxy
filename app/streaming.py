@@ -472,11 +472,25 @@ def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[in
             # This is not ideal for Content-Range header.
             # A better approach for "bytes=100-" when total_size is unknown is to NOT set Content-Range,
             # or to stream a predefined large chunk and set Content-Range for that chunk.
-            # For now, let's make this function require total_size if end_str is empty.
-            # This simplifies header generation.
-            if total_size is None:
-                 raise ValueError("Range header 'bytes=N-' requires known total_size or a specific end.")
-            return start, total_size - 1
+            # For now, let's make this function require total_size if end_str is empty for simplicity,
+            # or handle it by returning up to a certain max if truly unknown (but that's for a different scenario)
+            if total_size is None: # Should not happen if we enforce this earlier for "bytes=N-" type
+                 raise ValueError("Range 'bytes=N-' requires a known total file size.")
+
+            # If total_size is 0, the only valid end is -1 (meaning no bytes, range 0--1/0)
+            # or rather, a request for "bytes=0-" on a 0-byte file is tricky.
+            # A 416 should be raised if start >= total_size.
+            # If total_size = 0, then start=0 means start >= total_size.
+            # This is handled by the check: if total_size is not None and start >= total_size: HTTPException(416)
+            # So, if total_size is 0, any start >= 0 will hit that.
+            # Thus, this 'else' branch (meaning end_str is empty) implies total_size > 0 if we passed that check.
+            if total_size == 0: # This case should have been caught by start >= total_size for start=0
+                # However, if a client somehow requests "bytes=0-" for a 0-byte file and bypasses prior checks,
+                # it implies a range of 0 bytes. The end_inclusive should be start-1 to represent 0 length.
+                # Content-Range: bytes 0--1/0
+                 return start, start -1 # e.g. 0, -1 to signify zero length at start
+
+            return start, total_size - 1 # end is inclusive
 
 
 # Placeholder for the actual FastAPI app instance if we define routes here
@@ -484,3 +498,6 @@ def parse_range_header(range_header: str, total_size: Optional[int]) -> tuple[in
 # stream_router = APIRouter()
 # @stream_router.get(...)
 # We will integrate this into the main app's video router or a new streaming router.
+
+    # This line should ideally not be reached if the logic is correct and all paths return or raise.
+    raise RuntimeError("Internal logic error: parse_range_header reached end without returning a value or raising an exception.")

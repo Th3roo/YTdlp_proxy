@@ -200,8 +200,30 @@ async def stream_live_video(request: Request, range_header: Optional[str] = Head
 
         if range_header:
             try:
-                start, end = parse_range_header(range_header, file_size) # end is inclusive
+                print(f"DEBUG: Placeholder stream. Range header: '{range_header}', file_size: {file_size}") # ОТЛАДКА
+                parsed_range = parse_range_header(range_header, file_size)
+                if parsed_range is None:
+                    print("ERROR: parse_range_header returned None!")
+                    raise HTTPException(status_code=500, detail="Internal error: Range parsing failed unexpectedly (returned None).")
+                start, end = parsed_range # end is inclusive
+
                 content_length = (end - start + 1)
+
+                # Валидация content_length, особенно для 0-байтных файлов
+                if file_size == 0:
+                    if start == 0 and end == -1: # Ожидаемый результат для "bytes=0-" или "bytes=0-0" на 0-байтном файле
+                        content_length = 0
+                    # Любой другой start для 0-байтного файла должен был вызвать 416 ранее в parse_range_header
+                    # Но если parse_range_header вернул что-то иное, а start >= file_size (т.е. start >=0)
+                    elif start >= file_size: # Должно быть 416, но если мы здесь, значит что-то не так
+                         print(f"Warning: start ({start}) >= file_size ({file_size}) but no 416. Setting content_length=0.")
+                         content_length = 0
+
+                if content_length < 0:
+                     print(f"ERROR: Calculated negative content_length {content_length}. Range: {start}-{end}, FileSize: {file_size}. Correcting to 0.")
+                     # Это аварийное исправление, нужно понять, почему parse_range_header дал такой результат
+                     content_length = 0 # Не позволяем отрицательной длине контента
+
                 headers["Content-Length"] = str(content_length)
                 headers["Content-Range"] = f"bytes {start}-{end}/{file_size}"
                 status_code = 206
@@ -441,6 +463,42 @@ async def get_current_video_details():
         current_video_id_in_queue = None # Сброс, если ID оказался недействительным
         return CurrentVideoResponse(message="No video currently selected, or selected video not found.", video_info=None)
         # Или: raise HTTPException(status_code=404, detail="Current video not found, though ID was set.")
+
+@router.post("/video/{video_id_in_queue}/cancel_download", response_model=ActionSuccessResponse, responses={404: {"model": ErrorResponse}})
+async def cancel_video_download(video_id_in_queue: str):
+    """
+    Отменяет загрузку видео (устанавливает статус).
+    Не прерывает уже запущенный процесс yt-dlp, но меняет статус для UI и будущих действий.
+    """
+    if video_id_in_queue not in video_queue_store:
+        raise HTTPException(status_code=404, detail=f"Video with ID {video_id_in_queue} not found.")
+
+    video_entry = video_queue_store[video_id_in_queue]
+
+    if video_entry.status in ["downloading", "pending_download"]:
+        # Возвращаем статус к "metadata_fetched", чтобы можно было попробовать скачать снова
+        # или можно ввести новый статус "download_cancelled"
+        previous_status = video_entry.status
+        video_entry.status = "metadata_fetched" # или "download_cancelled"
+        video_entry.error_message = f"Download cancelled by user from status: {previous_status}"
+        # TODO: Если бы у нас был способ реально остановить yt-dlp, здесь была бы эта логика.
+        # Например, если бы _download_video_and_update_status проверяла какой-то флаг отмены.
+        # Для данного MVP, мы просто меняем статус. Частично скачанный файл может остаться.
+        print(f"Download for video '{video_entry.title}' (ID: {video_id_in_queue}) marked as cancelled.")
+        return ActionSuccessResponse(
+            message=f"Download for '{video_entry.title}' has been marked as cancelled.",
+            current_video=video_entry
+        )
+    elif video_entry.status == "downloaded":
+        return ActionSuccessResponse(
+            message=f"Video '{video_entry.title}' is already downloaded. Cannot cancel.",
+            current_video=video_entry
+        )
+    else:
+        return ActionSuccessResponse(
+            message=f"Video '{video_entry.title}' is not currently downloading (status: {video_entry.status}). No action taken.",
+            current_video=video_entry
+        )
 
 
 @router.post("/video/{video_id_in_queue}/download", response_model=ActionSuccessResponse, status_code=202, responses={404: {"model": ErrorResponse}})

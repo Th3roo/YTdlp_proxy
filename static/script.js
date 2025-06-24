@@ -87,8 +87,18 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await fetchApi(`/video/${videoIdInQueue}/download`, 'POST');
             console.log('Download initiated:', data);
             alert(data.message || `Запрос на скачивание видео ${videoIdInQueue} отправлен.`);
-            // Обновляем очередь, чтобы отобразить изменение статуса (pending_download, downloading)
-            await refreshQueue();
+            await refreshQueueAndCurrentVideo(); // Обновляем очередь и текущее видео
+        } catch (error) {
+            // Ошибка уже обработана в fetchApi
+        }
+    }
+
+    async function cancelDownload(videoIdInQueue) {
+        try {
+            const data = await fetchApi(`/video/${videoIdInQueue}/cancel_download`, 'POST');
+            console.log('Download cancellation processed:', data);
+            alert(data.message || `Запрос на отмену скачивания для видео ${videoIdInQueue} обработан.`);
+            await refreshQueueAndCurrentVideo(); // Обновляем очередь и текущее видео
         } catch (error) {
             // Ошибка уже обработана в fetchApi
         }
@@ -196,6 +206,13 @@ document.addEventListener('DOMContentLoaded', () => {
                  downloadingSpan.className = 'downloading-indicator';
                  downloadingSpan.textContent = 'Скачивается...';
                  listItem.appendChild(downloadingSpan);
+
+                const cancelButton = document.createElement('button');
+                cancelButton.textContent = 'Отменить загрузку';
+                cancelButton.className = 'cancel-download-btn'; // Новый класс для стилизации
+                cancelButton.onclick = () => cancelDownload(video.id_in_queue);
+                listItem.appendChild(cancelButton);
+
             } else if (video.status === "downloaded") {
                 const downloadedSpan = document.createElement('span');
                 downloadedSpan.className = 'downloaded-indicator';
@@ -203,7 +220,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 listItem.appendChild(downloadedSpan);
             }
 
-            listItem.appendChild(statusSpan); // Статус теперь в конце или рядом с кнопкой
+            listItem.appendChild(statusSpan);
 
             if (video.id_in_queue && video.id_in_queue === currentVideoIdInQueue) {
                 listItem.classList.add('active-in-queue');
