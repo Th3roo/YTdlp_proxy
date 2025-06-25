@@ -29,12 +29,14 @@ class YTDLPSeekableStream:
         self.ydl_opts = ydl_opts or {}
         # Ensure some defaults for streaming, these can be overridden by passed ydl_opts
         self.ydl_opts.setdefault('noplaylist', True)
-        self.ydl_opts.setdefault('quiet', True) # From your new code
-        self.ydl_opts.setdefault('noprogress', True) # From your new code
+        self.ydl_opts.setdefault('quiet', True)
+        self.ydl_opts.setdefault('noprogress', True)
+        # Override format for streaming to the most general 'best'
+        self.ydl_opts['format'] = 'best'
         # self.ydl_opts.setdefault('debug_printtraffic', True) # For debugging if needed
 
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
-        self.loop = loop or asyncio.get_event_loop() # Keep for potential async operations if any part of old structure uses it
+        self.loop = loop or asyncio.get_event_loop()
 
         # Initialize filepath *immediately* - From your new code
         # This initial filepath might be temporary if title/id are not yet known

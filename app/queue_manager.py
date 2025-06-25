@@ -63,8 +63,10 @@ class VideoQueueManager:
         print(f"QueueManager: Starting download for {video_entry.title} (ID: {video_id_in_queue})")
         video_entry.status = "downloading"
 
-        filename_template = f"downloads/%(title)s [%(id)s].%(ext)s"
-        downloaded_path = await download_video(str(video_entry.original_url), output_path=filename_template)
+        from app.config import YDL_OPTS # Импортируем YDL_OPTS
+        output_template = YDL_OPTS.get('outtmpl', 'downloads/%(title)s [%(id)s].%(ext)s') # Используем из конфига или дефолт
+
+        downloaded_path = await download_video(str(video_entry.original_url), output_path=output_template)
 
         if downloaded_path:
             video_entry.downloaded_path = downloaded_path
@@ -95,6 +97,9 @@ class VideoQueueManager:
 
         # Schedule metadata fetching
         background_tasks.add_task(self._fetch_and_update_metadata_task, video_id, str(payload.url))
+
+        if self.current_video_id_in_queue is None:
+            self.current_video_id_in_queue = video_id
 
         position = self.ordered_queue_ids.index(video_id)
         return new_video_entry, position
