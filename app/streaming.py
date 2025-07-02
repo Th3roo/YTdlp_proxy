@@ -30,7 +30,7 @@ class YTDLPSeekableStream:
         self.ydl_opts.setdefault("noplaylist", True)
         self.ydl_opts.setdefault("quiet", True)
         self.ydl_opts.setdefault("noprogress", True)
-        self.ydl_opts["format"] = "best"
+        #self.ydl_opts["format"] = "best"
 
         self.ydl = yt_dlp.YoutubeDL(self.ydl_opts)
         self.loop = loop or asyncio.get_event_loop()
