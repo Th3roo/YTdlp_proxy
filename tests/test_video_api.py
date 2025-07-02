@@ -5,6 +5,11 @@ from fastapi.testclient import TestClient # While we use httpx.AsyncClient, Test
 import asyncio
 import pytest_asyncio # Импортируем pytest_asyncio
 
+# Добавьте эти строки для отладки импорта
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 # URL для тестового видео (Rick Astley - Never Gonna Give You Up)
 TEST_VIDEO_URL = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 TEST_VIDEO_ID = "dQw4w9WgXcQ" # YouTube video ID
