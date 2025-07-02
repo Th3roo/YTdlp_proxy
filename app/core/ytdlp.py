@@ -4,21 +4,18 @@ from typing import Dict, Any, Optional
 from app.config import YDL_OPTS
 import os
 
-
 async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
     """
     Asynchronously gets video information using yt-dlp.
     Returns a dictionary with information or None in case of an error.
     """
     ydl_opts = YDL_OPTS.copy()
-    ydl_opts.update(
-        {
-            "extract_flat": "in_playlist",
-            "skip_download": True,
-            "forcejson": True,
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        }
-    )
+    ydl_opts.update({
+        'extract_flat': 'in_playlist', # Если это элемент плейлиста, получить только базовую инфу
+        'skip_download': True,    # Не скачивать видео, только метаданные
+        'forcejson': True,        # Принудительно выводить JSON
+        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
+    })
 
     loop = asyncio.get_event_loop()
 
@@ -63,12 +60,11 @@ async def download_video(
         os.makedirs(download_dir, exist_ok=True)
 
     ydl_opts = YDL_OPTS.copy()
-    ydl_opts.update(
-        {
-            "outtmpl": output_path,
-            "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        }
-    )
+    ydl_opts.update({
+        'outtmpl': output_path, # Шаблон для имени выходного файла
+        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
+        # 'progress_hooks': [my_hook], # Можно добавить хуки для отслеживания прогресса
+    })
 
     loop = asyncio.get_event_loop()
 
