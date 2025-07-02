@@ -14,9 +14,7 @@ async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
         'extract_flat': 'in_playlist', # Если это элемент плейлиста, получить только базовую инфу
         'skip_download': True,    # Не скачивать видео, только метаданные
         'forcejson': True,        # Принудительно выводить JSON
-        # 'noplaylist': True, # Already in base YDL_OPTS
-        # 'quiet': True, # Already in base YDL_OPTS
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # Предпочтительный формат для метаданных
+        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
     })
 
     loop = asyncio.get_event_loop()
@@ -66,9 +64,7 @@ async def download_video(url: str, output_path: str = "downloads/%(title)s.%(ext
     ydl_opts = YDL_OPTS.copy()
     ydl_opts.update({
         'outtmpl': output_path, # Шаблон для имени выходного файла
-        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', # Скачиваем лучшее качество
-        # 'noplaylist': True, # Already in base YDL_OPTS
-        # 'quiet': True, # Already in base YDL_OPTS
+        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
         # 'progress_hooks': [my_hook], # Можно добавить хуки для отслеживания прогресса
     })
 
