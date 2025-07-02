@@ -152,17 +152,17 @@ document.addEventListener('DOMContentLoaded', () => {
             copyDirectStreamLinkButton.addEventListener('click', this.copyStreamLink.bind(this));
         },
         
-        // НОВАЯ ФУНКЦИЯ КОПИРОВАНИЯ
         async copyStreamLink() {
             const videoId = directVideoPlayer.dataset.videoId;
             if (!videoId) {
                 alert("Сначала загрузите видео, чтобы получить ссылку на стрим.");
                 return;
             }
-            const streamUrl = `${window.location.origin}${API_BASE_URL}/stream/${videoId}`;
+            // ИЗМЕНЕНО: Ссылка теперь указывает на первый чанк remux-стрима.
+            const streamUrl = `${window.location.origin}${API_BASE_URL}/stream_remux/${videoId}?chunk=0`;
             try {
                 await navigator.clipboard.writeText(streamUrl);
-                alert("Ссылка на прокси-стрим скопирована!");
+                alert("Ссылка на прокси-стрим (первый чанк) скопирована!");
             } catch (err) {
                 console.error('Failed to copy: ', err);
                 alert("Не удалось скопировать ссылку. Возможно, ваш браузер не поддерживает эту функцию.");
@@ -180,27 +180,29 @@ document.addEventListener('DOMContentLoaded', () => {
         async loadVideo() {
             const input = directVideoUrlInput.value.trim();
             const videoId = this.extractVideoId(input);
-            directVideoPlayer.removeAttribute('src'); // Сбрасываем плеер
-            directVideoPlayer.dataset.videoId = ''; // Сбрасываем ID
+            directVideoPlayer.removeAttribute('src');
+            directVideoPlayer.dataset.videoId = '';
 
             if (!videoId) {
                 alert('Не удалось извлечь Video ID. Проверьте URL или вставьте ID напрямую.');
                 return;
             }
             
-            const streamUrl = `${API_BASE_URL}/stream/${videoId}`;
+            // ИЗМЕНЕНО: Используем новый, надежный эндпоинт stream_remux.
+            // Для простоты пока запрашиваем только первый чанк (chunk=0).
+            const streamUrl = `${API_BASE_URL}/stream_remux/${videoId}?chunk=0`;
             directVideoPlayer.src = streamUrl;
-            directVideoPlayer.dataset.videoId = videoId; // Сохраняем ID для функции копирования
+            directVideoPlayer.dataset.videoId = videoId;
             directVideoPlayer.load();
             directVideoPlayer.play().catch(e => console.warn("Autoplay was prevented.", e));
 
-            directVideoInfo.innerHTML = `<p>Загрузка видео с ID: <strong>${videoId}</strong></p>`;
+            directVideoInfo.innerHTML = `<p>Загрузка видео с ID: <strong>${videoId}</strong> (используя PyAV remux)</p>`;
 
             directVideoPlayer.onerror = () => {
-                 directVideoInfo.innerHTML = `<p style="color: #ff6b6b;">Ошибка при загрузке видео. Проверьте ID или доступность видео.</p>`;
+                 directVideoInfo.innerHTML = `<p style="color: #ff6b6b;">Ошибка при загрузке видео. Проверьте консоль бэкенда на наличие ошибок PyAV/FFmpeg.</p>`;
             };
             directVideoPlayer.oncanplay = () => {
-                directVideoInfo.innerHTML = `<p>Воспроизводится видео с ID: <strong>${videoId}</strong></p>`;
+                directVideoInfo.innerHTML = `<p>Воспроизводится первый 10-секундный чанк видео с ID: <strong>${videoId}</strong></p>`;
             };
         }
     };

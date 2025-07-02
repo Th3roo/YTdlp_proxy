@@ -4,3 +4,6 @@ yt-dlp
 pytest
 httpx
 pytest-asyncio
+av
+loguru
+dynaconf

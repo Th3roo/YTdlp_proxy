@@ -196,3 +196,4 @@ cython_debug/
 *.ytdlp
 
 temp_video_parts/
+video_cache/

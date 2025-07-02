@@ -2,22 +2,114 @@ import yt_dlp
 import asyncio
 import logging
 from typing import Dict, Any, Optional
-from app.config import YDL_OPTS
+from app.config import YDL_OPTS, STREAM_EXTRACT_OPTS
 import os
 
 logger = logging.getLogger(__name__)
+
+async def get_video_stream_urls(url: str) -> Optional[Dict[str, Any]]:
+    """
+    Asynchronously and robustly gets video information using yt-dlp.
+
+    It prioritizes separate, best-quality video and audio streams. If they are
+    not available, it falls back to the best available combined stream.
+    This function is designed to be resilient to missing metadata and None values.
+    """
+    loop = asyncio.get_event_loop()
+    opts = {
+        'quiet': True,
+        'noprogress': True,
+        'noplaylist': True,
+        'no_cookies_from_browser': True,
+        # Запрашиваем ВСЕ форматы, чтобы наша логика могла сделать лучший выбор
+        'format': 'all',
+    }
+
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info_dict = await loop.run_in_executor(
+                None, lambda: ydl.extract_info(url, download=False)
+            )
+
+        if not info_dict:
+            logger.error(f"yt-dlp returned no info_dict for {url}")
+            return None
+
+        all_formats = info_dict.get('formats', [])
+        video_url = None
+        audio_url = None
+
+        # --- ПОЛНОСТЬЮ НОВАЯ, НАДЕЖНАЯ ЛОГИКА ---
+
+        # 1. Попытка найти лучшие РАЗДЕЛЬНЫЕ потоки
+        
+        # Фильтруем и сортируем видеопотоки
+        # Ключ сортировки `f.get('height') or 0` безопасен и никогда не вернет None
+        video_streams = sorted(
+            [f for f in all_formats if f.get('vcodec') != 'none' and f.get('acodec') == 'none' and f.get('url')],
+            key=lambda f: (f.get('height') or 0, f.get('fps') or 0, f.get('tbr') or 0),
+            reverse=True
+        )
+
+        # Фильтруем и сортируем аудиопотоки
+        # Ключ сортировки `f.get('tbr') or 0` также безопасен
+        audio_streams = sorted(
+            [f for f in all_formats if f.get('acodec') != 'none' and f.get('vcodec') == 'none' and f.get('url')],
+            key=lambda f: (f.get('tbr') or 0, f.get('asr') or 0),
+            reverse=True
+        )
+
+        if video_streams and audio_streams:
+            logger.info(f"Found separate video and audio streams for {url}. Using best of each.")
+            video_url = video_streams[0].get('url')
+            audio_url = audio_streams[0].get('url')
+        
+        # 2. Запасной вариант: если раздельных потоков нет, ищем лучший ОБЪЕДИНЕННЫЙ поток
+        else:
+            logger.warning(f"Could not find separate streams for {url}. Falling back to best combined stream.")
+            combined_streams = sorted(
+                [f for f in all_formats if f.get('vcodec') != 'none' and f.get('acodec') != 'none' and f.get('url')],
+                key=lambda f: (f.get('height') or 0, f.get('tbr') or 0),
+                reverse=True
+            )
+            if combined_streams:
+                logger.info(f"Found a combined stream for {url}.")
+                # Для объединенного потока URL видео и аудио одинаковы
+                video_url = combined_streams[0].get('url')
+                audio_url = video_url
+        
+        # 3. Если ничего не найдено, выходим с ошибкой
+        if not video_url or not audio_url:
+            logger.error(f"Failed to find any usable video/audio URL for {url}")
+            return None
+
+        return {
+            "id": info_dict.get("id"),
+            "title": info_dict.get("title", "Unknown Title"),
+            "duration": info_dict.get("duration"),
+            "thumbnail": info_dict.get("thumbnail"),
+            "video_url": video_url,
+            "audio_url": audio_url,
+        }
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"yt-dlp DownloadError while fetching stream URLs for {url}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while fetching stream URLs for {url}: {e}", exc_info=True)
+        return None
+
 
 async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
     """
     Asynchronously gets video information using yt-dlp.
     Returns a dictionary with information or None in case of an error.
+    This version is used by the queue manager for metadata and full downloads.
     """
     ydl_opts = YDL_OPTS.copy()
     ydl_opts.update({
-        'extract_flat': 'in_playlist', # Если это элемент плейлиста, получить только базовую инфу
-        'skip_download': True,    # Не скачивать видео, только метаданные
-        'forcejson': True,        # Принудительно выводить JSON
-        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
+        'extract_flat': 'in_playlist',
+        'skip_download': True,
+        'forcejson': True,
     })
 
     loop = asyncio.get_event_loop()
@@ -64,9 +156,7 @@ async def download_video(
 
     ydl_opts = YDL_OPTS.copy()
     ydl_opts.update({
-        'outtmpl': output_path, # Шаблон для имени выходного файла
-        # 'format' больше не переопределяется здесь, используется из YDL_OPTS
-        # 'progress_hooks': [my_hook], # Можно добавить хуки для отслеживания прогресса
+        'outtmpl': output_path,
     })
 
     loop = asyncio.get_event_loop()
@@ -100,40 +190,3 @@ async def download_video(
     except Exception as e:
         logger.error(f"An unexpected error occurred during yt-dlp download of {url}: {e}", exc_info=True)
         return None
-
-
-if __name__ == "__main__":
-
-    async def main():
-        test_url_info = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        logger.info(f"Fetching info for: {test_url_info}")
-        info = await get_video_info(test_url_info)
-        if info:
-            logger.info(f"Title: {info.get('title')}")
-            logger.info(f"Duration: {info.get('duration')}s")
-            logger.info(f"Uploader: {info.get('uploader')}")
-            logger.info(f"Thumbnail: {info.get('thumbnail')}")
-        else:
-            logger.error("Failed to get video info.")
-
-        logger.info("-" * 20)
-
-        test_url_download_cc = "https://www.youtube.com/watch?v=y_zSBt0A3dY"
-
-        logger.info(f"Attempting to download: {test_url_download_cc}")
-        if not os.path.exists("downloads"):
-            os.makedirs("downloads")
-
-        downloaded_file_path = await download_video(
-            test_url_download_cc, output_path="downloads/%(title)s [%(id)s].%(ext)s"
-        )
-        if downloaded_file_path:
-            logger.info(f"Video downloaded successfully to: {downloaded_file_path}")
-            if os.path.exists(downloaded_file_path):
-                logger.info(f"File '{downloaded_file_path}' confirmed to exist.")
-            else:
-                logger.warning(f"File '{downloaded_file_path}' NOT FOUND after download.")
-        else:
-            logger.error("Failed to download video.")
-
-    asyncio.run(main())
