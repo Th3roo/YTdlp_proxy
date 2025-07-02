@@ -1,115 +1,154 @@
 import logging
-from typing import Dict, List, Optional, Tuple
+import os
+import re
 import uuid
-from fastapi import HTTPException, BackgroundTasks
+from typing import Dict, List, Optional, Tuple
 
-from app.models.video import VideoInQueue, VideoCreate
-from app.core.ytdlp import (
-    get_video_info,
-    download_video,
-)
+from fastapi import BackgroundTasks, HTTPException
+
 from app.config import YDL_OPTS
-
+from app.core.ytdlp import download_video, get_video_info
+from app.models.video import VideoCreate, VideoInQueue
 
 logger = logging.getLogger(__name__)
+
+# Определяем константу для папки с загрузками
+DOWNLOADS_DIR = "downloads"
+
 
 class VideoQueueManager:
     def __init__(self):
         self.video_queue_store: Dict[str, VideoInQueue] = {}
         self.ordered_queue_ids: List[str] = []
         self.current_video_id_in_queue: Optional[str] = None
+        # Убедимся, что папка для загрузок существует при старте
+        os.makedirs(DOWNLOADS_DIR, exist_ok=True)
 
-    async def _fetch_and_update_metadata_task(
-        self, video_id_in_queue: str, original_url: str
-    ):
-        logger.info(
-            f"Fetching metadata for {original_url} (ID: {video_id_in_queue})")
-        video_data = await get_video_info(original_url)
+    def _find_existing_video_file(self, video_id: str) -> Optional[str]:
+        """
+        Ищет в папке DOWNLOADS_DIR файл, содержащий ID видео.
+        Ищет по шаблону *[video_id].*
+        """
+        if not video_id:
+            return None
 
-        video_entry = self.video_queue_store.get(video_id_in_queue)
-        if not video_entry:
+        # Ищем файл, который содержит `[video_id]` в названии.
+        # Это стандартный формат для yt-dlp, если используется шаблон '%(id)s'.
+        pattern = re.compile(f".*\\[{re.escape(video_id)}\\].*")
+
+        try:
+            for filename in os.listdir(DOWNLOADS_DIR):
+                if pattern.match(filename):
+                    full_path = os.path.join(DOWNLOADS_DIR, filename)
+                    logger.info(
+                        f"Найден существующий файл для видео ID {video_id}: {full_path}"
+                    )
+                    return full_path
+        except FileNotFoundError:
             logger.warning(
-                f"Video ID {video_id_in_queue} not found in store after metadata fetch for {original_url}.")
-            return
-
-        if video_data:
-            video_entry.title = video_data.get("title", "Unknown Title")
-            video_entry.duration = video_data.get("duration")
-            video_entry.thumbnail = video_data.get("thumbnail")
-            video_entry.uploader = video_data.get("uploader")
-            video_entry.webpage_url = video_data.get(
-                "webpage_url", video_entry.original_url
+                f"Папка для загрузок '{DOWNLOADS_DIR}' не найдена во время поиска."
             )
-            video_entry.status = "metadata_fetched"
-            logger.info(f"Metadata updated for '{video_entry.title}' (ID: {video_id_in_queue})")
+            return None
+
+        logger.info(f"Локальный файл для видео ID {video_id} не найден.")
+        return None
+
+    async def add_video(self, payload: VideoCreate) -> Tuple[VideoInQueue, int]:
+        """
+        Асинхронно добавляет видео, сразу получает метаданные и проверяет наличие файла.
+        """
+        logger.info(f"Начинаем обработку добавления видео по URL: {payload.url}")
+        video_info = await get_video_info(payload.url)
+        video_id_in_queue = str(uuid.uuid4())
+
+        if not video_info or not video_info.get("id"):
+            logger.error(f"Не удалось получить метаданные или ID для URL: {payload.url}")
+            new_video_entry = VideoInQueue(
+                id_in_queue=video_id_in_queue,
+                original_url=payload.url,
+                title=f"Ошибка: Не удалось получить данные для URL",
+                status="metadata_failed",
+                error_message="Failed to fetch video metadata or video ID.",
+            )
         else:
-            video_entry.status = "metadata_failed"
-            video_entry.error_message = "Failed to fetch video metadata."
-            logger.error(f"Failed to fetch metadata for {original_url} (ID: {video_id_in_queue})")
+            youtube_id = video_info.get("id")
+            existing_file_path = self._find_existing_video_file(youtube_id)
+
+            base_info = {
+                "id_in_queue": video_id_in_queue,
+                "original_url": video_info.get("original_url", payload.url),
+                "webpage_url": video_info.get("webpage_url"),
+                "title": video_info.get("title", "Unknown Title"),
+                "duration": video_info.get("duration"),
+                "thumbnail": video_info.get("thumbnail"),
+                "uploader": video_info.get("uploader"),
+            }
+
+            if existing_file_path:
+                new_video_entry = VideoInQueue(
+                    **base_info,
+                    status="downloaded",
+                    downloaded_path=existing_file_path,
+                )
+                logger.info(f"Видео '{new_video_entry.title}' уже существует локально.")
+            else:
+                new_video_entry = VideoInQueue(**base_info, status="metadata_fetched")
+                logger.info(
+                    f"Метаданные для '{new_video_entry.title}' получены, файл не найден."
+                )
+
+        self.video_queue_store[video_id_in_queue] = new_video_entry
+        self.ordered_queue_ids.append(video_id_in_queue)
+
+        if self.current_video_id_in_queue is None and self.ordered_queue_ids:
+            self.current_video_id_in_queue = self.ordered_queue_ids[0]
+
+        position = self.ordered_queue_ids.index(video_id_in_queue)
+        return new_video_entry, position
 
     async def _download_video_task(self, video_id_in_queue: str):
-        video_entry = self.video_queue_store.get(video_id_in_queue)
-        if not video_entry:
-            logger.warning(
-                f"Download task: Video ID {video_id_in_queue} not found in store.")
+        video_entry = self.get_video_entry(video_id_in_queue)
+        if not video_entry or not video_entry.original_url:
+            logger.error(f"Невозможно скачать видео {video_id_in_queue}: нет данных или URL.")
+            if video_entry:
+                video_entry.status = "download_failed"
+                video_entry.error_message = "Original URL is missing."
             return
 
         if video_entry.status == "downloaded":
-            logger.info(f"Video '{video_entry.title}' (ID: {video_id_in_queue}) already downloaded.")
+            logger.info(f"Видео '{video_entry.title}' уже скачано.")
             return
 
-        if not video_entry.original_url:
-            video_entry.status = "download_failed"
-            video_entry.error_message = "Cannot download, original URL is missing."
-            logger.error(
-                f"Cannot download '{video_entry.title}' (ID: {video_id_in_queue}), original URL missing.")
-            return
-
-        logger.info(
-            f"Starting download for '{video_entry.title}' (ID: {video_id_in_queue}) from {video_entry.original_url}")
+        logger.info(f"Начало загрузки '{video_entry.title}'")
         video_entry.status = "downloading"
 
         output_template = YDL_OPTS.get(
-            "outtmpl", "downloads/%(title)s [%(id)s].%(ext)s"
+            "outtmpl", f"{DOWNLOADS_DIR}/%(title)s [%(id)s].%(ext)s"
         )
 
         downloaded_path = await download_video(
-            str(video_entry.original_url), output_path=output_template
+            video_entry.original_url, output_path=output_template
         )
 
-        if downloaded_path:
+        # Перепроверяем наличие entry после асинхронной операции
+        video_entry = self.get_video_entry(video_id_in_queue)
+        if not video_entry:
+            logger.warning(f"Видео {video_id_in_queue} было удалено во время скачивания.")
+            return
+            
+        # Проверяем, не была ли отменена загрузка пока она шла
+        if video_entry.status != 'downloading':
+            logger.warning(f"Статус загрузки для '{video_entry.title}' изменился на '{video_entry.status}' во время скачивания. Прерываем обновление статуса.")
+            return
+
+        if downloaded_path and os.path.exists(downloaded_path):
             video_entry.downloaded_path = downloaded_path
             video_entry.status = "downloaded"
-            logger.info(
-                f"Successfully downloaded '{video_entry.title}' (ID: {video_id_in_queue}) to {downloaded_path}")
+            logger.info(f"Успешно скачано: '{video_entry.title}'")
         else:
             video_entry.status = "download_failed"
-            video_entry.error_message = "Failed to download video."
-            logger.error(f"Failed to download '{video_entry.title}' (ID: {video_id_in_queue}) from {video_entry.original_url}")
-
-    def add_video(
-        self, payload: VideoCreate, background_tasks: BackgroundTasks
-    ) -> Tuple[VideoInQueue, int]:
-        video_id = str(uuid.uuid4())
-        new_video_entry = VideoInQueue(
-            id_in_queue=video_id,
-            original_url=payload.url,
-            title=str(payload.url).split("/")[-1] or "Loading title...",
-            status="pending_metadata",
-        )
-
-        self.video_queue_store[video_id] = new_video_entry
-        self.ordered_queue_ids.append(video_id)
-
-        background_tasks.add_task(
-            self._fetch_and_update_metadata_task, video_id, str(payload.url)
-        )
-
-        if self.current_video_id_in_queue is None:
-            self.current_video_id_in_queue = video_id
-
-        position = self.ordered_queue_ids.index(video_id)
-        return new_video_entry, position
+            video_entry.error_message = "yt-dlp не вернул путь или файл не найден после скачивания."
+            logger.error(f"Ошибка скачивания '{video_entry.title}'")
 
     def get_queue_state(self) -> Tuple[List[VideoInQueue], Optional[str], int]:
         queue_list = [
@@ -121,110 +160,68 @@ class VideoQueueManager:
 
     def play_next_video(self) -> VideoInQueue:
         if not self.ordered_queue_ids:
-            raise HTTPException(status_code=404, detail="Video queue is empty")
+            raise HTTPException(status_code=404, detail="Очередь пуста")
 
-        if self.current_video_id_in_queue is None:
+        current_id = self.current_video_id_in_queue
+        if current_id is None:
             self.current_video_id_in_queue = self.ordered_queue_ids[0]
         else:
             try:
-                current_index = self.ordered_queue_ids.index(
-                    self.current_video_id_in_queue
-                )
+                current_index = self.ordered_queue_ids.index(current_id)
                 if current_index < len(self.ordered_queue_ids) - 1:
-                    self.current_video_id_in_queue = self.ordered_queue_ids[
-                        current_index + 1
-                    ]
+                    self.current_video_id_in_queue = self.ordered_queue_ids[current_index + 1]
                 else:
-                    raise HTTPException(
-                        status_code=404, detail="Already at the end of the queue"
-                    )
+                    raise HTTPException(status_code=404, detail="Это конец очереди")
             except ValueError:
                 self.current_video_id_in_queue = self.ordered_queue_ids[0]
 
-        current_video = self.video_queue_store.get(self.current_video_id_in_queue)
-        if not current_video:
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error: Current video ID not found in store.",
-            )
-        return current_video
+        return self.get_video_entry(self.current_video_id_in_queue)
 
     def play_previous_video(self) -> VideoInQueue:
         if not self.ordered_queue_ids:
-            raise HTTPException(status_code=404, detail="Video queue is empty")
+            raise HTTPException(status_code=404, detail="Очередь пуста")
 
-        if self.current_video_id_in_queue is None:
-            raise HTTPException(
-                status_code=404,
-                detail="No video is currently selected to go previous from.",
-            )
+        current_id = self.current_video_id_in_queue
+        if current_id is None:
+            raise HTTPException(status_code=404, detail="Видео не выбрано")
 
         try:
-            current_index = self.ordered_queue_ids.index(self.current_video_id_in_queue)
+            current_index = self.ordered_queue_ids.index(current_id)
             if current_index > 0:
-                self.current_video_id_in_queue = self.ordered_queue_ids[
-                    current_index - 1
-                ]
+                self.current_video_id_in_queue = self.ordered_queue_ids[current_index - 1]
             else:
-                raise HTTPException(
-                    status_code=404, detail="Already at the beginning of the queue"
-                )
+                raise HTTPException(status_code=404, detail="Это начало очереди")
         except ValueError:
             self.current_video_id_in_queue = self.ordered_queue_ids[0]
 
-        current_video = self.video_queue_store.get(self.current_video_id_in_queue)
-        if not current_video:
-            raise HTTPException(
-                status_code=500,
-                detail="Internal server error: Current video ID not found in store during previous.",
-            )
-        return current_video
+        return self.get_video_entry(self.current_video_id_in_queue)
 
     def get_current_video_details_for_stream(self) -> Tuple[Optional[str], str]:
-        active_video_url: Optional[str] = None
-        active_video_title: str = "Live Stream"
+        if not self.current_video_id_in_queue:
+            return None, "Stream Offline"
 
-        if not self.ordered_queue_ids:
-            return None, active_video_title
+        video_entry = self.get_video_entry(self.current_video_id_in_queue)
 
-        if (
-            self.current_video_id_in_queue is None
-            or self.current_video_id_in_queue not in self.video_queue_store
-        ):
-            if self.ordered_queue_ids:
-                self.current_video_id_in_queue = self.ordered_queue_ids[0]
-            else:
-                return None, active_video_title
+        if not video_entry:
+            return None, "Stream Offline"
+        
+        # Главная логика: если видео скачано и путь существует, возвращаем локальный путь
+        if video_entry.status == "downloaded" and video_entry.downloaded_path and os.path.exists(video_entry.downloaded_path):
+            logger.info(f"Стриминг локального файла: {video_entry.downloaded_path}")
+            return video_entry.downloaded_path, video_entry.title or "Downloaded Video"
+        
+        # Иначе, если есть URL, возвращаем его
+        if video_entry.original_url and video_entry.status not in ["metadata_failed", "download_failed"]:
+            logger.info(f"Стриминг URL: {video_entry.original_url}")
+            return video_entry.original_url, video_entry.title or "Streaming Video"
 
-        video_entry = self.video_queue_store.get(self.current_video_id_in_queue)
-
-        if video_entry and video_entry.original_url:
-            if video_entry.status not in ["metadata_failed", "download_failed"]:
-                active_video_url = str(video_entry.original_url)
-                active_video_title = video_entry.title or active_video_title
-            else:
-                logger.warning(
-                    f"Current video '{video_entry.title}' (ID: {self.current_video_id_in_queue}) has error status '{video_entry.status}'. Will not use for live stream.")
-        else:
-            logger.warning(
-                f"Current video entry for ID {self.current_video_id_in_queue} is invalid or has no URL. Cannot use for live stream.")
-
-        return active_video_url, active_video_title
+        # Во всех остальных случаях (ошибка, нет URL) стримить нечего
+        return None, "Stream Offline"
 
     def get_current_video_info_api(self) -> Optional[VideoInQueue]:
-        if not self.ordered_queue_ids:
+        if not self.current_video_id_in_queue:
             return None
-
-        if (
-            self.current_video_id_in_queue is None
-            or self.current_video_id_in_queue not in self.video_queue_store
-        ):
-            if self.ordered_queue_ids:
-                self.current_video_id_in_queue = self.ordered_queue_ids[0]
-            else:
-                return None
-
-        return self.video_queue_store.get(self.current_video_id_in_queue)
+        return self.get_video_entry(self.current_video_id_in_queue)
 
     def get_video_entry(self, video_id_in_queue: str) -> Optional[VideoInQueue]:
         return self.video_queue_store.get(video_id_in_queue)
@@ -234,50 +231,24 @@ class VideoQueueManager:
     ) -> VideoInQueue:
         video_entry = self.get_video_entry(video_id_in_queue)
         if not video_entry:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Video with ID {video_id_in_queue} not found in queue.",
-            )
+            raise HTTPException(status_code=404, detail=f"Видео {video_id_in_queue} не найдено")
 
-        if video_entry.status == "downloaded":
+        if video_entry.status in ["downloaded", "downloading"]:
             return video_entry
-
-        if video_entry.status == "downloading":
-            return video_entry
-
-        if video_entry.status not in [
-            "pending_metadata",
-            "metadata_fetched",
-            "metadata_failed",
-            "download_failed",
-            "pending_download",
-        ]:
-            logger.info(
-                f"Video '{video_entry.title}' (ID: {video_id_in_queue}) in status '{video_entry.status}' - will be set to pending_download.")
-
+        
         video_entry.status = "pending_download"
         background_tasks.add_task(self._download_video_task, video_id_in_queue)
-
         return video_entry
 
     def cancel_download(self, video_id_in_queue: str) -> VideoInQueue:
         video_entry = self.get_video_entry(video_id_in_queue)
         if not video_entry:
-            raise HTTPException(
-                status_code=404, detail=f"Video with ID {video_id_in_queue} not found."
-            )
+            raise HTTPException(status_code=404, detail=f"Видео {video_id_in_queue} не найдено")
 
         if video_entry.status in ["downloading", "pending_download"]:
-            previous_status = video_entry.status
             video_entry.status = "metadata_fetched"
-            video_entry.error_message = (
-                f"Download cancelled by user from status: {previous_status}"
-            )
-            logger.info(
-                f"Download for video '{video_entry.title}' (ID: {video_id_in_queue}) marked as cancelled from status {previous_status}.")
-        elif video_entry.status == "downloaded":
-            logger.info(f"Video '{video_entry.title}' (ID: {video_id_in_queue}) is already downloaded, cancel request ignored.")
-            pass
+            video_entry.error_message = "Загрузка отменена пользователем."
+            logger.info(f"Загрузка '{video_entry.title}' отменена.")
         else:
-            pass
+            logger.warning(f"Нельзя отменить загрузку для '{video_entry.title}', статус: {video_entry.status}")
         return video_entry
