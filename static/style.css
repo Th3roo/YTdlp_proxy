@@ -26,7 +26,6 @@ h1 { text-align: center; margin-bottom: 20px; }
 h2 { margin-bottom: 15px; font-size: 1.4em; }
 h3 { margin-bottom: 10px; font-size: 1.1em; border-bottom: none; }
 
-/* --- Стили для вкладок --- */
 .tab-nav {
     display: flex;
     border-bottom: 2px solid #444;
@@ -57,7 +56,6 @@ h3 { margin-bottom: 10px; font-size: 1.1em; border-bottom: none; }
     display: block;
 }
 
-/* --- Основная сетка для вкладки Live Stream --- */
 #live-stream-tab .section-grid {
     display: grid;
     grid-template-columns: 2fr 1fr;
@@ -160,7 +158,6 @@ video {
 .link-container { display: flex; gap: 10px; }
 #copyStreamLinkButton { width: auto; }
 
-/* --- Стили для вкладки Direct Proxy --- */
 .direct-stream-controls {
     display: flex;
     gap: 10px;
@@ -169,21 +166,21 @@ video {
 }
 .direct-stream-controls input[type="text"] {
     flex-grow: 1;
-    margin-bottom: 0; /* Убираем нижний отступ, так как кнопки рядом */
+    margin-bottom: 0;
 }
 .direct-stream-controls button {
-    width: auto; /* Кнопки не растягиваются на всю ширину */
-    flex-shrink: 0; /* Не сжиматься */
+    width: auto;
+    flex-shrink: 0;
 }
-/* Стили для второй кнопки */
-#copyDirectStreamLinkButton {
+
+/* ИЗМЕНЕНО: Стиль теперь применяется по классу для всех второстепенных кнопок */
+.secondary-button {
     background-color: #555;
     color: #ddd;
 }
-#copyDirectStreamLinkButton:hover {
+.secondary-button:hover {
     background-color: #666;
 }
-
 
 #directVideoInfo {
     margin-top: 10px;
