@@ -2,6 +2,7 @@ import yt_dlp
 import asyncio
 from typing import Dict, Any, Optional
 from app.config import YDL_OPTS # Import consolidated YDL_OPTS
+import os
 
 async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
     """
