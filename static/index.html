@@ -3,58 +3,87 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Stream Control</title>
+    <title>YTdlp Proxy & Stream</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <h1>Управление стримом</h1>
+        <h1>YTdlp Proxy & Stream</h1>
 
-        <div class="control-panel">
-            <div class="add-video">
-                <h2>Добавить видео/стрим</h2>
-                <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
-                <button id="addVideoButton">Добавить в очередь</button>
-            </div>
-
-            <div class="playback-controls">
-                <h2>Управление воспроизведением</h2>
-                <button id="prevButton">Предыдущее</button>
-                <button id="pauseResumeButton">Пауза/Старт</button>
-                <button id="nextButton">Следующее</button>
-            </div>
+        <!-- Навигация по вкладкам -->
+        <div class="tab-nav">
+            <button class="tab-button active" data-tab="live-stream-tab">Live Stream / Очередь</button>
+            <button class="tab-button" data-tab="direct-proxy-tab">Прямой Прокси</button>
         </div>
 
-        <div class="stream-player-section">
-            <h2>Плеер</h2>
-            <video id="videoPlayer" controls width="100%" preload="metadata">
-                Ваш браузер не поддерживает тег video.
-            </video>
-        </div>
+        <!-- Контент вкладок -->
+        <div class="tab-content">
 
-        <div class="stream-link-section">
-            <h2>Ссылка на постоянный стрим (для OBS, VLC и т.д.):</h2>
-            <div class="link-container">
-                <input type="text" id="permanentStreamLink" readonly>
-                <button id="copyStreamLinkButton">Копировать</button>
+            <!-- ВКЛАДКА 1: LIVE STREAM / ОЧЕРЕДЬ -->
+            <div id="live-stream-tab" class="tab-pane active">
+                <div class.section-grid">
+                    <div class="main-content">
+                        <h2>Плеер Live Stream</h2>
+                        <video id="liveVideoPlayer" controls width="100%" preload="metadata">
+                            Ваш браузер не поддерживает тег video.
+                        </video>
+                        <div class="stream-link-section">
+                            <h3>Ссылка на постоянный стрим (для OBS, VLC):</h3>
+                            <div class="link-container">
+                                <input type="text" id="permanentStreamLink" readonly>
+                                <button id="copyStreamLinkButton">Копировать</button>
+                            </div>
+                        </div>
+                        <div class="current-video-section">
+                            <h3>Текущее видео в потоке</h3>
+                            <div id="currentVideoDisplay">
+                                <p><strong>Название:</strong> <span id="currentTitle">-</span></p>
+                                <p><strong>Статус в очереди:</strong> <span id="currentStatus">-</span></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="sidebar-content">
+                        <h2>Управление очередью</h2>
+                        <div class="control-panel">
+                            <div class="add-video">
+                                <h3>Добавить в очередь</h3>
+                                <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
+                                <button id="addVideoButton">Добавить</button>
+                            </div>
+                            <div class="playback-controls">
+                                <h3>Управление потоком</h3>
+                                <button id="prevButton">Предыдущее</button>
+                                <button id="nextButton">Следующее</button>
+                            </div>
+                        </div>
+                        <div class="queue-section">
+                            <h3>Очередь</h3>
+                            <ul id="videoQueueList">
+                                <li class="placeholder">Очередь пуста</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <div class="current-video-section">
-            <h2>Информация о текущем видео в потоке</h2>
-            <div id="currentVideoDisplay">
-                <p><strong>Название:</strong> <span id="currentTitle">-</span></p>
-                <!-- <p><strong>Ссылка для плеера:</strong> <a id="currentLink" href="#" target="_blank">-</a></p> -->
-                <p><strong>Статус в очереди:</strong> <span id="currentStatus">-</span></p>
+            <!-- ВКЛАДКА 2: ПРЯМОЙ ПРОКСИ -->
+            <div id="direct-proxy-tab" class="tab-pane">
+                <h2>Проксирование видео по ссылке</h2>
+                <p>Вставьте ссылку на видео с YouTube или просто Video ID для прямого стриминга через прокси.</p>
+                <div class="direct-stream-controls">
+                    <input type="text" id="directVideoUrl" placeholder="URL или Video ID...">
+                    <button id="loadDirectVideoButton">Загрузить видео</button>
+                </div>
+                <div class="direct-player-container">
+                    <video id="directVideoPlayer" controls width="100%" preload="metadata">
+                        Ваш браузер не поддерживает тег video.
+                    </video>
+                     <div id="directVideoInfo">
+                        <p>Видео не загружено</p>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <div class="queue-section">
-            <h2>Очередь</h2>
-            <ul id="videoQueueList">
-                <!-- Элементы очереди будут добавлены сюда -->
-                <li class="placeholder">Очередь пуста</li>
-            </ul>
         </div>
     </div>
 
