@@ -7,8 +7,8 @@ from fastapi.responses import StreamingResponse
 from .services import get_video_details, stream_video_generator
 from .utils import parse_range_header
 
-# Создаем маршрутизатор
 router = APIRouter()
+
 
 @router.get("/stream/{video_id}")
 async def stream_video(
@@ -25,7 +25,7 @@ async def stream_video(
         raise HTTPException(status_code=500, detail=str(e))
 
     content_length = end - start + 1
-    
+
     # Создаем генератор для потоковой передачи
     video_generator = stream_video_generator(video_id, start, end)
 
@@ -34,7 +34,7 @@ async def stream_video(
         "Content-Type": media_type,
         "Content-Length": str(content_length),
     }
-    
+
     status_code = 200
     if range:
         status_code = 206  # Partial Content

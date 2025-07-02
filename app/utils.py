@@ -5,16 +5,17 @@ from typing import Tuple
 
 from fastapi import HTTPException
 
+
 def parse_range_header(range_header: str, total_size: int) -> Tuple[int, int]:
     """
-    Парсит HTTP заголовок 'Range' для получения начального и конечного байта.
+    Parses the HTTP 'Range' header to get the start and end bytes.
     """
     if not range_header:
         return 0, total_size - 1
 
-    match = re.match(r'bytes=(\d+)-(\d*)', range_header)
+    match = re.match(r"bytes=(\d+)-(\d*)", range_header)
     if not match:
-        raise HTTPException(status_code=416, detail="Неверный формат заголовка Range")
+        raise HTTPException(status_code=416, detail="Invalid Range header format")
 
     start_str, end_str = match.groups()
     start = int(start_str)
@@ -22,10 +23,12 @@ def parse_range_header(range_header: str, total_size: int) -> Tuple[int, int]:
     if end_str:
         end = int(end_str)
     else:
-        # Если конец не указан, читаем до конца файла
+        # If the end is not specified, read to the end of the file
         end = total_size - 1
 
     if start >= total_size or end >= total_size or start > end:
-        raise HTTPException(status_code=416, detail="Запрошенный диапазон не может быть удовлетворён")
+        raise HTTPException(
+            status_code=416, detail="Requested range not satisfiable"
+        )
 
     return start, end
