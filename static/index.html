@@ -21,7 +21,7 @@
 
             <!-- ВКЛАДКА 1: LIVE STREAM / ОЧЕРЕДЬ -->
             <div id="live-stream-tab" class="tab-pane active">
-                <div class.section-grid">
+                <div class="section-grid">
                     <div class="main-content">
                         <h2>Плеер Live Stream</h2>
                         <video id="liveVideoPlayer" controls width="100%" preload="metadata">
@@ -73,6 +73,8 @@
                 <div class="direct-stream-controls">
                     <input type="text" id="directVideoUrl" placeholder="URL или Video ID...">
                     <button id="loadDirectVideoButton">Загрузить видео</button>
+                    <!-- НОВАЯ КНОПКА -->
+                    <button id="copyDirectStreamLinkButton">Копировать ссылку</button>
                 </div>
                 <div class="direct-player-container">
                     <video id="directVideoPlayer" controls width="100%" preload="metadata">

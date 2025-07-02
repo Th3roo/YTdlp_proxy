@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Вкладка Direct Proxy
     const directVideoUrlInput = document.getElementById('directVideoUrl');
     const loadDirectVideoButton = document.getElementById('loadDirectVideoButton');
+    const copyDirectStreamLinkButton = document.getElementById('copyDirectStreamLinkButton');
     const directVideoPlayer = document.getElementById('directVideoPlayer');
     const directVideoInfo = document.getElementById('directVideoInfo');
 
@@ -56,11 +57,8 @@ document.addEventListener('DOMContentLoaded', () => {
     function setupTabs() {
         tabButtons.forEach(button => {
             button.addEventListener('click', () => {
-                // Убираем активность со всех
                 tabButtons.forEach(btn => btn.classList.remove('active'));
                 tabPanes.forEach(pane => pane.classList.remove('active'));
-
-                // Добавляем активность нужным
                 button.classList.add('active');
                 document.getElementById(button.dataset.tab).classList.add('active');
             });
@@ -71,54 +69,37 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- Логика для вкладки "Live Stream / Очередь" ---
     const liveStreamModule = {
         init() {
-            // Устанавливаем постоянные ссылки
             const permanentStreamUrl = `${window.location.origin}${API_BASE_URL}/live_stream`;
             permanentStreamLinkInput.value = permanentStreamUrl;
             liveVideoPlayer.src = permanentStreamUrl;
-
-            // Навешиваем события
             addVideoButton.addEventListener('click', this.addVideoToQueue.bind(this));
             nextButton.addEventListener('click', this.playNext.bind(this));
             prevButton.addEventListener('click', this.playPrevious.bind(this));
-            copyStreamLinkButton.addEventListener('click', this.copyLink.bind(this));
-            
-            // Запускаем периодическое обновление
+            copyStreamLinkButton.addEventListener('click', () => {
+                permanentStreamLinkInput.select();
+                document.execCommand('copy');
+                alert('Ссылка на постоянный стрим скопирована!');
+            });
             this.updateLiveStreamTab();
             setInterval(() => this.updateLiveStreamTab(), 5000);
         },
 
         async addVideoToQueue() {
             const url = videoUrlInput.value.trim();
-            if (!url) {
-                alert('Пожалуйста, введите URL видео.');
-                return;
-            }
+            if (!url) return alert('Пожалуйста, введите URL видео.');
             try {
                 await fetchApi('/video/add', 'POST', { url });
                 videoUrlInput.value = '';
-                await this.updateLiveStreamTab(); // Обновляем немедленно
+                await this.updateLiveStreamTab();
             } catch (error) {/* обработка в fetchApi */}
         },
 
         async playNext() {
-            try {
-                await fetchApi('/video/play_next', 'POST');
-                await this.updateLiveStreamTab();
-            } catch (error) {/* обработка в fetchApi */}
+            try { await fetchApi('/video/play_next', 'POST'); await this.updateLiveStreamTab(); } catch (error) {/* обработка в fetchApi */}
         },
 
         async playPrevious() {
-            try {
-                await fetchApi('/video/play_previous', 'POST');
-                await this.updateLiveStreamTab();
-            } catch (error) {/* обработка в fetchApi */}
-        },
-        
-        copyLink() {
-            permanentStreamLinkInput.select();
-            document.execCommand('copy');
-            alert('Ссылка на стрим скопирована!');
-            window.getSelection().removeAllRanges();
+            try { await fetchApi('/video/play_previous', 'POST'); await this.updateLiveStreamTab(); } catch (error) {/* обработка в fetchApi */}
         },
 
         renderQueue(queue, currentVideoIdInQueue) {
@@ -129,13 +110,8 @@ document.addEventListener('DOMContentLoaded', () => {
             }
             queue.forEach(video => {
                 const li = document.createElement('li');
-                if (video.id_in_queue === currentVideoIdInQueue) {
-                    li.classList.add('active-in-queue');
-                }
-                li.innerHTML = `
-                    <span class="video-title" title="${video.title || video.original_url}">${video.title || 'Загрузка...'}</span>
-                    <span class="video-status">(${video.status})</span>
-                `;
+                if (video.id_in_queue === currentVideoIdInQueue) li.classList.add('active-in-queue');
+                li.innerHTML = `<span class="video-title" title="${video.title || video.original_url}">${video.title || 'Загрузка...'}</span><span class="video-status">(${video.status})</span>`;
                 videoQueueList.appendChild(li);
             });
         },
@@ -144,38 +120,27 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const queueState = await fetchApi('/queue');
                 const { queue, current_video_id_in_queue } = queueState;
-                
                 this.renderQueue(queue, current_video_id_in_queue);
                 
                 const lastPlayedId = liveVideoPlayer.dataset.lastPlayedId;
-                let currentVideo = null;
-
-                if (current_video_id_in_queue) {
-                    currentVideo = queue.find(v => v.id_in_queue === current_video_id_in_queue);
-                }
+                let currentVideo = current_video_id_in_queue ? queue.find(v => v.id_in_queue === current_video_id_in_queue) : null;
 
                 if (currentVideo) {
                     currentTitleDisplay.textContent = currentVideo.title || 'Загрузка...';
                     currentStatusDisplay.textContent = currentVideo.status;
-                    
                     if (currentVideo.id_in_queue !== lastPlayedId) {
-                        console.log("Live stream source changed. Reloading player.");
                         liveVideoPlayer.dataset.lastPlayedId = currentVideo.id_in_queue;
-                        liveVideoPlayer.load(); // Перезагружаем плеер, чтобы он запросил новый контент
+                        liveVideoPlayer.load();
                     }
                 } else {
                     currentTitleDisplay.textContent = 'Stream Offline';
                     currentStatusDisplay.textContent = 'Очередь пуста';
                      if ('placeholder' !== lastPlayedId) {
-                        console.log("Queue is empty. Reloading player for placeholder video.");
                         liveVideoPlayer.dataset.lastPlayedId = 'placeholder';
                         liveVideoPlayer.load();
                     }
                 }
-            } catch (error) {
-                currentTitleDisplay.textContent = 'Ошибка загрузки';
-                currentStatusDisplay.textContent = 'Не удалось обновить данные';
-            }
+            } catch (error) {/* обработка в fetchApi */}
         }
     };
 
@@ -184,15 +149,29 @@ document.addEventListener('DOMContentLoaded', () => {
     const directProxyModule = {
         init() {
             loadDirectVideoButton.addEventListener('click', this.loadVideo.bind(this));
+            copyDirectStreamLinkButton.addEventListener('click', this.copyStreamLink.bind(this));
+        },
+        
+        // НОВАЯ ФУНКЦИЯ КОПИРОВАНИЯ
+        async copyStreamLink() {
+            const videoId = directVideoPlayer.dataset.videoId;
+            if (!videoId) {
+                alert("Сначала загрузите видео, чтобы получить ссылку на стрим.");
+                return;
+            }
+            const streamUrl = `${window.location.origin}${API_BASE_URL}/stream/${videoId}`;
+            try {
+                await navigator.clipboard.writeText(streamUrl);
+                alert("Ссылка на прокси-стрим скопирована!");
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+                alert("Не удалось скопировать ссылку. Возможно, ваш браузер не поддерживает эту функцию.");
+            }
         },
 
         extractVideoId(url) {
             if (!url) return null;
-            // Простая проверка, является ли строка уже ID (обычно 11 символов)
-            if (/^[a-zA-Z0-9_-]{11}$/.test(url)) {
-                return url;
-            }
-            // Regex для извлечения ID из разных форматов URL YouTube
+            if (/^[a-zA-Z0-9_-]{11}$/.test(url)) return url;
             const regex = /(?:v=|youtu\.be\/|embed\/|watch\?v=|\/v\/)([^&\s?]+)/;
             const match = url.match(regex);
             return match ? match[1] : null;
@@ -201,16 +180,17 @@ document.addEventListener('DOMContentLoaded', () => {
         async loadVideo() {
             const input = directVideoUrlInput.value.trim();
             const videoId = this.extractVideoId(input);
+            directVideoPlayer.removeAttribute('src'); // Сбрасываем плеер
+            directVideoPlayer.dataset.videoId = ''; // Сбрасываем ID
 
             if (!videoId) {
-                alert('Не удалось извлечь Video ID из ссылки. Пожалуйста, проверьте URL или вставьте ID напрямую.');
+                alert('Не удалось извлечь Video ID. Проверьте URL или вставьте ID напрямую.');
                 return;
             }
             
             const streamUrl = `${API_BASE_URL}/stream/${videoId}`;
-            console.log(`Loading direct stream from: ${streamUrl}`);
-            
             directVideoPlayer.src = streamUrl;
+            directVideoPlayer.dataset.videoId = videoId; // Сохраняем ID для функции копирования
             directVideoPlayer.load();
             directVideoPlayer.play().catch(e => console.warn("Autoplay was prevented.", e));
 
@@ -225,8 +205,6 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     };
 
-
-    // --- Инициализация приложения ---
     function main() {
         setupTabs();
         liveStreamModule.init();

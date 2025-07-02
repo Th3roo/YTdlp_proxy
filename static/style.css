@@ -8,7 +8,7 @@ body {
 }
 
 .container {
-    max-width: 1200px; /* Увеличим максимальную ширину для удобства */
+    max-width: 1200px;
     margin: 0 auto;
     padding: 20px;
     background-color: #2c2c2c;
@@ -81,7 +81,6 @@ input[type="url"], input[type="text"] {
 }
 
 button {
-    width: 100%;
     padding: 10px 15px;
     border: none;
     border-radius: 4px;
@@ -94,6 +93,8 @@ button {
 }
 button:hover { background-color: #8ae9ff; }
 button:active { background-color: #4cc1e0; }
+
+.add-video button { width: 100%; }
 
 .playback-controls button {
     width: auto;
@@ -166,7 +167,23 @@ video {
     align-items: center;
     margin-bottom: 20px;
 }
-#loadDirectVideoButton { width: auto; }
+.direct-stream-controls input[type="text"] {
+    flex-grow: 1;
+    margin-bottom: 0; /* Убираем нижний отступ, так как кнопки рядом */
+}
+.direct-stream-controls button {
+    width: auto; /* Кнопки не растягиваются на всю ширину */
+    flex-shrink: 0; /* Не сжиматься */
+}
+/* Стили для второй кнопки */
+#copyDirectStreamLinkButton {
+    background-color: #555;
+    color: #ddd;
+}
+#copyDirectStreamLinkButton:hover {
+    background-color: #666;
+}
+
 
 #directVideoInfo {
     margin-top: 10px;
