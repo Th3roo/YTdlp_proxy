@@ -1,3 +1,4 @@
+import logging
 from fastapi import APIRouter, HTTPException, Body, BackgroundTasks, Request, Header
 from typing import List, Optional, Dict, Annotated
 import uuid
@@ -25,6 +26,7 @@ from app.queue_manager import VideoQueueManager
 
 router = APIRouter()
 queue_manager = VideoQueueManager()
+logger = logging.getLogger(__name__)
 
 PLACEHOLDER_VIDEO_PATH = "static/offline_video.mp4"
 
@@ -75,16 +77,16 @@ async def read_file_chunked(
                 await loop.run_in_executor(None, f.close)
 
     except FileNotFoundError as e_fnf:
-        print(
-            f"Error in read_file_chunked: Placeholder file not found at {file_path}. Error: {e_fnf}"
-        )
+        logger.error(
+            f"Error in read_file_chunked: Placeholder file not found at {file_path}. Error: {e_fnf}",
+            exc_info=True)
         raise RuntimeError(
             f"Streaming failed: file {file_path} not found during read_file_chunked operation."
         ) from e_fnf
     except Exception as e:
-        print(
-            f"Error streaming placeholder file {file_path} during read_file_chunked operation: {e}"
-        )
+        logger.error(
+            f"Error streaming placeholder file {file_path} during read_file_chunked operation: {e}",
+            exc_info=True)
         raise RuntimeError(
             f"Streaming failed for file {file_path} during read_file_chunked operation."
         ) from e
@@ -192,9 +194,9 @@ async def stream_live_video(
                         yield chunk
                         bytes_yielded_for_this_response += len(chunk)
                 except Exception as e_iter_live:
-                    print(
-                        f"Error during /live_stream content iteration for {active_video_url}: {e_iter_live}"
-                    )
+                    logger.error(
+                        f"Error during /live_stream content iteration for {active_video_url}: {e_iter_live}",
+                        exc_info=True)
                 finally:
                     if stream:
                         await stream.close()
@@ -213,9 +215,9 @@ async def stream_live_video(
         except Exception as e_general_setup:
             if stream:
                 await stream.close()
-            print(
-                f"Unexpected error during /live_stream setup for {active_video_url}: {e_general_setup}"
-            )
+            logger.error(
+                f"Unexpected error during /live_stream setup for {active_video_url}: {e_general_setup}",
+                exc_info=True)
             active_video_url = None
 
     if not active_video_url:
@@ -343,9 +345,9 @@ async def stream_video(
                     yield data
                     bytes_yielded += len(data)
             except Exception as e_iter_direct:
-                print(
-                    f"Error in /stream/{video_id} content iterator for {url}: {e_iter_direct}"
-                )
+                logger.error(
+                    f"Error in /stream/{video_id} content iterator for {url}: {e_iter_direct}",
+                    exc_info=True)
             finally:
                 if stream:
                     await stream.close()
@@ -376,9 +378,9 @@ async def stream_video(
     except Exception as e_general_direct:
         if stream:
             await stream.close()
-        print(
-            f"Stream for {video_id}: An unexpected error occurred: {e_general_direct}"
-        )
+        logger.error(
+            f"Stream for {video_id}: An unexpected error occurred: {e_general_direct}",
+            exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"An unexpected error occurred while trying to stream {video_id}: {type(e_general_direct).__name__}",

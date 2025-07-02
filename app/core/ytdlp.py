@@ -1,8 +1,11 @@
 import yt_dlp
 import asyncio
+import logging
 from typing import Dict, Any, Optional
 from app.config import YDL_OPTS
 import os
+
+logger = logging.getLogger(__name__)
 
 async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
     """
@@ -41,10 +44,10 @@ async def get_video_info(url: str) -> Optional[Dict[str, Any]]:
             "formats": video_data.get("formats"),
         }
     except yt_dlp.utils.DownloadError as e:
-        print(f"yt-dlp DownloadError: {e}")
+        logger.error(f"yt-dlp DownloadError while fetching info for {url}: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"An unexpected error occurred with yt-dlp: {e}")
+        logger.error(f"An unexpected error occurred with yt-dlp while fetching info for {url}: {e}", exc_info=True)
         return None
 
 
@@ -84,20 +87,18 @@ async def download_video(
                 filename = ydl.prepare_filename(entry_info)
 
                 if not os.path.exists(filename):
-                    print(
-                        f"Warning: File '{filename}' not found after supposedly successful download of '{url}'."
-                    )
+                    logger.warning(
+                        f"File '{filename}' not found after supposedly successful download of '{url}'.")
                 return filename
             else:
-                print(
-                    f"yt-dlp download failed with error code: {error_code} for url: {url}"
-                )
+                logger.error(
+                    f"yt-dlp download failed for {url} with error code: {error_code}")
                 return None
     except yt_dlp.utils.DownloadError as e:
-        print(f"yt-dlp DownloadError during download: {e}")
+        logger.error(f"yt-dlp DownloadError during download of {url}: {e}", exc_info=True)
         return None
     except Exception as e:
-        print(f"An unexpected error occurred during yt-dlp download: {e}")
+        logger.error(f"An unexpected error occurred during yt-dlp download of {url}: {e}", exc_info=True)
         return None
 
 
@@ -105,21 +106,21 @@ if __name__ == "__main__":
 
     async def main():
         test_url_info = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        print(f"Fetching info for: {test_url_info}")
+        logger.info(f"Fetching info for: {test_url_info}")
         info = await get_video_info(test_url_info)
         if info:
-            print(f"Title: {info.get('title')}")
-            print(f"Duration: {info.get('duration')}s")
-            print(f"Uploader: {info.get('uploader')}")
-            print(f"Thumbnail: {info.get('thumbnail')}")
+            logger.info(f"Title: {info.get('title')}")
+            logger.info(f"Duration: {info.get('duration')}s")
+            logger.info(f"Uploader: {info.get('uploader')}")
+            logger.info(f"Thumbnail: {info.get('thumbnail')}")
         else:
-            print("Failed to get video info.")
+            logger.error("Failed to get video info.")
 
-        print("-" * 20)
+        logger.info("-" * 20)
 
         test_url_download_cc = "https://www.youtube.com/watch?v=y_zSBt0A3dY"
 
-        print(f"Attempting to download: {test_url_download_cc}")
+        logger.info(f"Attempting to download: {test_url_download_cc}")
         if not os.path.exists("downloads"):
             os.makedirs("downloads")
 
@@ -127,12 +128,12 @@ if __name__ == "__main__":
             test_url_download_cc, output_path="downloads/%(title)s [%(id)s].%(ext)s"
         )
         if downloaded_file_path:
-            print(f"Video downloaded successfully to: {downloaded_file_path}")
+            logger.info(f"Video downloaded successfully to: {downloaded_file_path}")
             if os.path.exists(downloaded_file_path):
-                print(f"File '{downloaded_file_path}' confirmed to exist.")
+                logger.info(f"File '{downloaded_file_path}' confirmed to exist.")
             else:
-                print(f"File '{downloaded_file_path}' NOT FOUND.")
+                logger.warning(f"File '{downloaded_file_path}' NOT FOUND after download.")
         else:
-            print("Failed to download video.")
+            logger.error("Failed to download video.")
 
     asyncio.run(main())
