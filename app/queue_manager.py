@@ -1,3 +1,4 @@
+import logging
 from typing import Dict, List, Optional, Tuple
 import uuid
 from fastapi import HTTPException, BackgroundTasks
@@ -10,6 +11,8 @@ from app.core.ytdlp import (
 from app.config import YDL_OPTS
 
 
+logger = logging.getLogger(__name__)
+
 class VideoQueueManager:
     def __init__(self):
         self.video_queue_store: Dict[str, VideoInQueue] = {}
@@ -19,16 +22,14 @@ class VideoQueueManager:
     async def _fetch_and_update_metadata_task(
         self, video_id_in_queue: str, original_url: str
     ):
-        print(
-            f"QueueManager: Fetching metadata for {original_url} (ID: {video_id_in_queue})"
-        )
+        logger.info(
+            f"Fetching metadata for {original_url} (ID: {video_id_in_queue})")
         video_data = await get_video_info(original_url)
 
         video_entry = self.video_queue_store.get(video_id_in_queue)
         if not video_entry:
-            print(
-                f"QueueManager: Video ID {video_id_in_queue} not found in store after metadata fetch."
-            )
+            logger.warning(
+                f"Video ID {video_id_in_queue} not found in store after metadata fetch for {original_url}.")
             return
 
         if video_data:
@@ -40,35 +41,32 @@ class VideoQueueManager:
                 "webpage_url", video_entry.original_url
             )
             video_entry.status = "metadata_fetched"
-            print(f"QueueManager: Metadata updated for {video_entry.title}")
+            logger.info(f"Metadata updated for '{video_entry.title}' (ID: {video_id_in_queue})")
         else:
             video_entry.status = "metadata_failed"
             video_entry.error_message = "Failed to fetch video metadata."
-            print(f"QueueManager: Failed to fetch metadata for {original_url}")
+            logger.error(f"Failed to fetch metadata for {original_url} (ID: {video_id_in_queue})")
 
     async def _download_video_task(self, video_id_in_queue: str):
         video_entry = self.video_queue_store.get(video_id_in_queue)
         if not video_entry:
-            print(
-                f"QueueManager: Download task - Video ID {video_id_in_queue} not found."
-            )
+            logger.warning(
+                f"Download task: Video ID {video_id_in_queue} not found in store.")
             return
 
         if video_entry.status == "downloaded":
-            print(f"QueueManager: Video {video_entry.title} already downloaded.")
+            logger.info(f"Video '{video_entry.title}' (ID: {video_id_in_queue}) already downloaded.")
             return
 
         if not video_entry.original_url:
             video_entry.status = "download_failed"
             video_entry.error_message = "Cannot download, original URL is missing."
-            print(
-                f"QueueManager: Cannot download {video_entry.title}, original URL missing."
-            )
+            logger.error(
+                f"Cannot download '{video_entry.title}' (ID: {video_id_in_queue}), original URL missing.")
             return
 
-        print(
-            f"QueueManager: Starting download for {video_entry.title} (ID: {video_id_in_queue})"
-        )
+        logger.info(
+            f"Starting download for '{video_entry.title}' (ID: {video_id_in_queue}) from {video_entry.original_url}")
         video_entry.status = "downloading"
 
         output_template = YDL_OPTS.get(
@@ -82,13 +80,12 @@ class VideoQueueManager:
         if downloaded_path:
             video_entry.downloaded_path = downloaded_path
             video_entry.status = "downloaded"
-            print(
-                f"QueueManager: Successfully downloaded {video_entry.title} to {downloaded_path}"
-            )
+            logger.info(
+                f"Successfully downloaded '{video_entry.title}' (ID: {video_id_in_queue}) to {downloaded_path}")
         else:
             video_entry.status = "download_failed"
             video_entry.error_message = "Failed to download video."
-            print(f"QueueManager: Failed to download {video_entry.title}")
+            logger.error(f"Failed to download '{video_entry.title}' (ID: {video_id_in_queue}) from {video_entry.original_url}")
 
     def add_video(
         self, payload: VideoCreate, background_tasks: BackgroundTasks
@@ -206,13 +203,11 @@ class VideoQueueManager:
                 active_video_url = str(video_entry.original_url)
                 active_video_title = video_entry.title or active_video_title
             else:
-                print(
-                    f"QueueManager: Current video '{video_entry.title}' has error status '{video_entry.status}'."
-                )
+                logger.warning(
+                    f"Current video '{video_entry.title}' (ID: {self.current_video_id_in_queue}) has error status '{video_entry.status}'. Will not use for live stream.")
         else:
-            print(
-                f"QueueManager: Current video entry for ID {self.current_video_id_in_queue} is invalid or has no URL."
-            )
+            logger.warning(
+                f"Current video entry for ID {self.current_video_id_in_queue} is invalid or has no URL. Cannot use for live stream.")
 
         return active_video_url, active_video_title
 
@@ -257,9 +252,8 @@ class VideoQueueManager:
             "download_failed",
             "pending_download",
         ]:
-            print(
-                f"QueueManager: Video '{video_entry.title}' in status '{video_entry.status}' cannot start download directly without status change."
-            )
+            logger.info(
+                f"Video '{video_entry.title}' (ID: {video_id_in_queue}) in status '{video_entry.status}' - will be set to pending_download.")
 
         video_entry.status = "pending_download"
         background_tasks.add_task(self._download_video_task, video_id_in_queue)
@@ -279,10 +273,10 @@ class VideoQueueManager:
             video_entry.error_message = (
                 f"Download cancelled by user from status: {previous_status}"
             )
-            print(
-                f"QueueManager: Download for video '{video_entry.title}' (ID: {video_id_in_queue}) marked as cancelled."
-            )
+            logger.info(
+                f"Download for video '{video_entry.title}' (ID: {video_id_in_queue}) marked as cancelled from status {previous_status}.")
         elif video_entry.status == "downloaded":
+            logger.info(f"Video '{video_entry.title}' (ID: {video_id_in_queue}) is already downloaded, cancel request ignored.")
             pass
         else:
             pass
