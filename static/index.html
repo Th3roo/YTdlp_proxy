@@ -7,19 +7,52 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <h1>YTdlp Proxy & Stream</h1>
+    <div class="app-container">
+        <!-- Вертикальная навигация слева -->
+        <nav class="side-nav">
+            <!-- Кнопки вкладок -->
+            <button class="nav-button active" data-tab="direct-proxy-tab">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 17-5-5 5-5"/><path d="m6 17-5-5 5-5"/></svg>
+                <span>Прокси</span>
+            </button>
+            <button class="nav-button" data-tab="live-stream-tab">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg>
+                <span>Стрим</span>
+            </button>
+        </nav>
 
-        <div class="tab-nav">
-            <button class="tab-button active" data-tab="live-stream-tab">Live Stream / Очередь</button>
-            <button class="tab-button" data-tab="direct-proxy-tab">Прямой Прокси</button>
-        </div>
+        <!-- Основной контент -->
+        <main class="main-content">
+            <!-- ВКЛАДКА 1: ПРЯМОЙ ПРОКСИ (теперь главная) -->
+            <div id="direct-proxy-tab" class="tab-pane active">
+                <div class="content-wrapper">
+                    <img src="https://svgshare.com/i/185F.svg" alt="Logo" class="logo">
+                    <div class="input-container">
+                         <input type="text" id="directVideoUrl" placeholder="вставь ссылку сюда">
+                         <button id="loadDirectVideoButton">Вставить</button>
+                    </div>
 
-        <div class="tab-content">
+                    <!-- ИЗМЕНЕНО: этот блок будет появляться/исчезать -->
+                    <div class="player-wrapper">
+                        <video id="directVideoPlayer" controls preload="metadata">
+                            Ваш браузер не поддерживает тег video.
+                        </video>
+                        <div id="directVideoInfo">
+                            <p>Видео не загружено</p>
+                        </div>
+                    </div>
+                     <!-- ИЗМЕНЕНО: этот блок теперь будет скрыт по умолчанию -->
+                     <div class="action-buttons hidden">
+                        <button id="copyDirectStreamLinkButton" class="secondary-button">Копировать ссылку на стрим</button>
+                        <button id="copyPageUrlButton" class="secondary-button">Копировать URL страницы</button>
+                    </div>
+                </div>
+            </div>
 
-            <div id="live-stream-tab" class="tab-pane active">
-                <div class="section-grid">
-                    <div class="main-content">
+            <!-- ВКЛАДКА 2: СТРИМ / ОЧЕРЕДЬ -->
+            <div id="live-stream-tab" class="tab-pane">
+                 <div class="section-grid">
+                    <div class="player-column">
                         <h2>Плеер Live Stream</h2>
                         <video id="liveVideoPlayer" controls width="100%" preload="metadata">
                             Ваш браузер не поддерживает тег video.
@@ -39,7 +72,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="sidebar-content">
+                    <div class="queue-column">
                         <h2>Управление очередью</h2>
                         <div class="control-panel">
                             <div class="add-video">
@@ -62,30 +95,10 @@
                     </div>
                 </div>
             </div>
-
-            <!-- ИЗМЕНЕНО: Добавлена новая кнопка -->
-            <div id="direct-proxy-tab" class="tab-pane">
-                <h2>Проксирование видео по ссылке</h2>
-                <p>Вставьте ссылку на видео с YouTube или просто Video ID для прямого стриминга через прокси.</p>
-                <div class="direct-stream-controls">
-                    <input type="text" id="directVideoUrl" placeholder="URL или Video ID...">
-                    <button id="loadDirectVideoButton">Загрузить видео</button>
-                    <button id="copyDirectStreamLinkButton" class="secondary-button">Копировать ссылку на стрим</button>
-                    <button id="copyPageUrlButton" class="secondary-button">Копировать URL страницы</button>
-                </div>
-                <div class="direct-player-container">
-                    <video id="directVideoPlayer" controls width="100%" preload="metadata">
-                        Ваш браузер не поддерживает тег video.
-                    </video>
-                     <div id="directVideoInfo">
-                        <p>Видео не загружено</p>
-                    </div>
-                </div>
-            </div>
-
-        </div>
+        </main>
     </div>
 
+    <div id="notification-container"></div>
     <script src="script.js"></script>
 </body>
 </html>
