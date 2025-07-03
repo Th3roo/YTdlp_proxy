@@ -10,7 +10,6 @@
     <div class="app-container">
         <!-- Вертикальная навигация слева -->
         <nav class="side-nav">
-            <!-- Кнопки вкладок -->
             <button class="nav-button active" data-tab="direct-proxy-tab">
                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m13 17-5-5 5-5"/><path d="m6 17-5-5 5-5"/></svg>
                 <span>Прокси</span>
@@ -23,16 +22,15 @@
 
         <!-- Основной контент -->
         <main class="main-content">
-            <!-- ВКЛАДКА 1: ПРЯМОЙ ПРОКСИ (теперь главная) -->
+            <!-- ВКЛАДКА 1: ПРЯМОЙ ПРОКСИ -->
             <div id="direct-proxy-tab" class="tab-pane active">
                 <div class="content-wrapper">
-                    <img src="https://svgshare.com/i/185F.svg" alt="Logo" class="logo">
+                    <!-- ИЗМЕНЕНО: Логотип удален -->
                     <div class="input-container">
                          <input type="text" id="directVideoUrl" placeholder="вставь ссылку сюда">
                          <button id="loadDirectVideoButton">Вставить</button>
                     </div>
 
-                    <!-- ИЗМЕНЕНО: этот блок будет появляться/исчезать -->
                     <div class="player-wrapper">
                         <video id="directVideoPlayer" controls preload="metadata">
                             Ваш браузер не поддерживает тег video.
@@ -41,7 +39,6 @@
                             <p>Видео не загружено</p>
                         </div>
                     </div>
-                     <!-- ИЗМЕНЕНО: этот блок теперь будет скрыт по умолчанию -->
                      <div class="action-buttons hidden">
                         <button id="copyDirectStreamLinkButton" class="secondary-button">Копировать ссылку на стрим</button>
                         <button id="copyPageUrlButton" class="secondary-button">Копировать URL страницы</button>
@@ -49,7 +46,7 @@
                 </div>
             </div>
 
-            <!-- ВКЛАДКА 2: СТРИМ / ОЧЕРЕДЬ -->
+            <!-- ВКЛАДКА 2: СТРИМ / ОЧЕРЕДЬ (полностью переработана) -->
             <div id="live-stream-tab" class="tab-pane">
                  <div class="section-grid">
                     <div class="player-column">
@@ -57,33 +54,39 @@
                         <video id="liveVideoPlayer" controls width="100%" preload="metadata">
                             Ваш браузер не поддерживает тег video.
                         </video>
-                        <div class="stream-link-section">
-                            <h3>Ссылка на постоянный стрим (для OBS, VLC):</h3>
-                            <div class="link-container">
-                                <input type="text" id="permanentStreamLink" readonly>
-                                <button id="copyStreamLinkButton">Копировать</button>
-                            </div>
-                        </div>
-                        <div class="current-video-section">
+                        <div class="info-card">
                             <h3>Текущее видео в потоке</h3>
                             <div id="currentVideoDisplay">
                                 <p><strong>Название:</strong> <span id="currentTitle">-</span></p>
                                 <p><strong>Статус в очереди:</strong> <span id="currentStatus">-</span></p>
                             </div>
                         </div>
+                         <div class="info-card">
+                            <h3>Ссылка на стрим (OBS, VLC)</h3>
+                             <div class="input-container grey">
+                                <input type="text" id="permanentStreamLink" readonly>
+                                <button id="copyStreamLinkButton">Копировать</button>
+                            </div>
+                        </div>
                     </div>
                     <div class="queue-column">
                         <h2>Управление очередью</h2>
                         <div class="control-panel">
-                            <div class="add-video">
-                                <h3>Добавить в очередь</h3>
+                            <h3>Добавить в очередь</h3>
+                            <div class="input-container grey">
                                 <input type="url" id="videoUrl" placeholder="https://www.youtube.com/watch?v=...">
                                 <button id="addVideoButton">Добавить</button>
                             </div>
-                            <div class="playback-controls">
-                                <h3>Управление потоком</h3>
-                                <button id="prevButton">Предыдущее</button>
-                                <button id="nextButton">Следующее</button>
+                        </div>
+                         <div class="control-panel">
+                            <h3>Управление потоком</h3>
+                            <div class="button-group">
+                                 <button id="prevButton" class="control-button" title="Предыдущее">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+                                 </button>
+                                 <button id="nextButton" class="control-button" title="Следующее">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="13 17 18 12 13 7"></polyline><polyline points="6 17 11 12 6 7"></polyline></svg>
+                                 </button>
                             </div>
                         </div>
                         <div class="queue-section">
